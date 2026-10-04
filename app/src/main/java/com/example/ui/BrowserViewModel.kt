@@ -5,20 +5,31 @@ import android.net.Uri
 import android.webkit.URLUtil
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.BrowserAutomationStore
 import com.example.data.BrowserDatabase
 import com.example.data.BrowserRepository
+import com.example.data.model.AutomationPlayback
+import com.example.data.model.AutomationStep
 import com.example.data.model.Bookmark
+import com.example.data.model.BrowserAutomation
 import com.example.data.model.BrowserTab
 import com.example.data.model.HistoryItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
+
+private const val MAX_AUTOMATION_STEPS = 200
+private const val MAX_AUTOMATION_SELECTOR_LENGTH = 1_000
+private const val MAX_AUTOMATION_VALUE_LENGTH = 2_000
+private const val MAX_AUTOMATION_NAME_LENGTH = 50
+private const val DEFAULT_AUTOMATION_DELAY_MS = 350L
+private const val MIN_AUTOMATION_DELAY_MS = 150L
+private const val MAX_AUTOMATION_DELAY_MS = 5_000L
 
 enum class SearchEngine(val displayName: String, val searchUrl: String, val homeUrl: String) {
     GOOGLE("Google", "https://www.google.com/search?q=", "https://www.google.com"),
@@ -49,7 +60,15 @@ data class BrowserUiState(
     val isDesktopSiteDefault: Boolean = false,
     val reloadTrigger: Long = 0L,
     val navigateBackTrigger: Long = 0L,
-    val navigateForwardTrigger: Long = 0L
+    val navigateForwardTrigger: Long = 0L,
+    val automations: List<BrowserAutomation> = emptyList(),
+    val isAutomationsOpen: Boolean = false,
+    val isRecordingAutomation: Boolean = false,
+    val recordingAutomationTabId: String? = null,
+    val recordingAutomationStartUrl: String? = null,
+    val recordingAutomationSteps: List<AutomationStep> = emptyList(),
+    val automationPlayback: AutomationPlayback? = null,
+    val automationStatus: String? = null
 ) {
     val currentTab: BrowserTab?
         get() {
@@ -67,6 +86,9 @@ data class BrowserUiState(
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: BrowserRepository
+    private val automationStore = BrowserAutomationStore(application)
+    private var lastAutomationStepAt = 0L
+    private var nextAutomationRunId = 0L
 
     private val _uiState = MutableStateFlow(BrowserUiState())
     val uiState: StateFlow<BrowserUiState> = _uiState.asStateFlow()
@@ -104,7 +126,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update {
             it.copy(
                 regularTabs = listOf(firstTab),
-                activeRegularTabId = firstTab.id
+                activeRegularTabId = firstTab.id,
+                automations = automationStore.getAll()
             )
         }
     }
@@ -116,10 +139,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             url = url,
             isIncognito = isIncognito,
             isDesktopSite = _uiState.value.isDesktopSiteDefault,
-            navigationTrigger = if (url == "chrome://newtab") 0L else System.currentTimeMillis()
+            navigationTrigger = if (url == "chrome://newtab") 0L else 1L
         )
 
-        _uiState.update { state ->
+        _uiState.update { previousState ->
+            val state = cancelAutomationPlayback(previousState, "Automation stopped because the active tab changed.")
             if (isIncognito) {
                 val updated = state.incognitoTabs + newTab
                 state.copy(
@@ -143,7 +167,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun closeTab(tabId: String, isIncognito: Boolean) {
-        _uiState.update { state ->
+        _uiState.update { previousState ->
+            val state = if (previousState.automationPlayback?.tabId == tabId) {
+                cancelAutomationPlayback(previousState, "Automation stopped because its tab was closed.")
+            } else previousState
             if (isIncognito) {
                 val updated = state.incognitoTabs.filterNot { it.id == tabId }
                 if (updated.isEmpty()) {
@@ -183,7 +210,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun closeAllTabs(isIncognito: Boolean) {
-        _uiState.update { state ->
+        _uiState.update { previousState ->
+            val tabsBeingClosed = if (isIncognito) previousState.incognitoTabs else previousState.regularTabs
+            val playbackTabId = previousState.automationPlayback?.tabId
+            val closesPlaybackTab = playbackTabId != null && tabsBeingClosed.any { it.id == playbackTabId }
+            val state = if (closesPlaybackTab) {
+                cancelAutomationPlayback(previousState, "Automation stopped because its tab was closed.")
+            } else previousState
             if (isIncognito) {
                 state.copy(
                     incognitoTabs = emptyList(),
@@ -203,7 +236,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectTab(tabId: String, isIncognito: Boolean) {
-        _uiState.update { state ->
+        _uiState.update { previousState ->
+            val state = cancelAutomationPlayback(previousState, "Automation stopped because the active tab changed.")
             if (isIncognito) {
                 state.copy(
                     activeIncognitoTabId = tabId,
@@ -221,8 +255,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun switchIncognitoView(isIncognito: Boolean) {
-        _uiState.update { state ->
-            state.copy(isIncognitoViewActive = isIncognito)
+        _uiState.update { previousState ->
+            cancelAutomationPlayback(previousState, "Automation stopped because the active tab changed.")
+                .copy(isIncognitoViewActive = isIncognito)
         }
     }
 
@@ -292,9 +327,17 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun navigateTo(input: String) {
         val targetUrl = resolveUrl(input.trim())
         val current = _uiState.value.currentTab ?: return
-        val navTrigger = System.currentTimeMillis()
+        if (!current.isNewTabPage && sameNavigationUrl(current.url, targetUrl)) {
+            _uiState.update {
+                cancelAutomationPlayback(it, "Automation stopped because navigation changed.")
+                    .copy(isOmniboxEditing = false, isTabSwitcherOpen = false)
+            }
+            return
+        }
+        val navTrigger = current.navigationTrigger + 1L
 
-        _uiState.update { state ->
+        _uiState.update { previousState ->
+            val state = cancelAutomationPlayback(previousState, "Automation stopped because navigation changed.")
             val updateTab: (BrowserTab) -> BrowserTab = { tab ->
                 if (tab.id == current.id) {
                     tab.copy(
@@ -383,16 +426,182 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun setAutomationsVisible(visible: Boolean) {
+        _uiState.update { it.copy(isAutomationsOpen = visible) }
+    }
+
+    @Synchronized
+    fun startAutomationRecording() {
+        val tab = _uiState.value.currentTab
+        when {
+            tab == null || tab.isNewTabPage -> {
+                _uiState.update { it.copy(automationStatus = "Open a website before recording an automation.") }
+            }
+            tab.isIncognito -> {
+                _uiState.update { it.copy(automationStatus = "Recording is unavailable in incognito tabs.") }
+            }
+            !_uiState.value.isJavaScriptEnabled -> {
+                _uiState.update { it.copy(automationStatus = "Enable JavaScript before recording website actions.") }
+            }
+            !URLUtil.isHttpUrl(tab.url) && !URLUtil.isHttpsUrl(tab.url) -> {
+                _uiState.update { it.copy(automationStatus = "Only web pages can be recorded.") }
+            }
+            else -> {
+                lastAutomationStepAt = 0L
+                _uiState.update {
+                    it.copy(
+                        isAutomationsOpen = false,
+                        isRecordingAutomation = true,
+                        recordingAutomationTabId = tab.id,
+                        recordingAutomationStartUrl = tab.url,
+                        recordingAutomationSteps = emptyList(),
+                        automationStatus = "Recording on ${tab.displayHost}."
+                    )
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun onAutomationStepRecorded(tabId: String, step: AutomationStep) {
+        val currentState = _uiState.value
+        if (!currentState.isRecordingAutomation || currentState.recordingAutomationTabId != tabId ||
+            currentState.recordingAutomationSteps.size >= MAX_AUTOMATION_STEPS
+        ) return
+
+        val now = System.currentTimeMillis()
+        val safeStep = step.copy(
+            selector = step.selector.take(MAX_AUTOMATION_SELECTOR_LENGTH),
+            value = step.value.take(MAX_AUTOMATION_VALUE_LENGTH),
+            delayBeforeMs = if (lastAutomationStepAt == 0L) DEFAULT_AUTOMATION_DELAY_MS
+            else (now - lastAutomationStepAt).coerceIn(MIN_AUTOMATION_DELAY_MS, MAX_AUTOMATION_DELAY_MS)
+        )
+        lastAutomationStepAt = now
+        _uiState.update { state ->
+            if (!state.isRecordingAutomation || state.recordingAutomationTabId != tabId ||
+                state.recordingAutomationSteps.size >= MAX_AUTOMATION_STEPS
+            ) {
+                state
+            } else {
+                state.copy(recordingAutomationSteps = state.recordingAutomationSteps + safeStep)
+            }
+        }
+    }
+
+    @Synchronized
+    fun saveAutomationRecording(name: String) {
+        val state = _uiState.value
+        val startUrl = state.recordingAutomationStartUrl
+        if (startUrl.isNullOrBlank() || state.recordingAutomationSteps.isEmpty()) {
+            _uiState.update {
+                it.copy(automationStatus = "No actions were recorded. Interact with the page before saving.")
+            }
+            return
+        }
+
+        val automation = BrowserAutomation(
+            name = name.trim().take(MAX_AUTOMATION_NAME_LENGTH).ifBlank {
+                "Automation ${state.automations.size + 1}"
+            },
+            startUrl = startUrl,
+            steps = state.recordingAutomationSteps.toList()
+        )
+        automationStore.save(automation)
+        lastAutomationStepAt = 0L
+        _uiState.update {
+            it.copy(
+                automations = automationStore.getAll(),
+                isRecordingAutomation = false,
+                recordingAutomationTabId = null,
+                recordingAutomationStartUrl = null,
+                recordingAutomationSteps = emptyList(),
+                automationStatus = "Saved \"${automation.name}\"."
+            )
+        }
+    }
+
+    @Synchronized
+    fun cancelAutomationRecording() {
+        lastAutomationStepAt = 0L
+        _uiState.update {
+            it.copy(
+                isRecordingAutomation = false,
+                recordingAutomationTabId = null,
+                recordingAutomationStartUrl = null,
+                recordingAutomationSteps = emptyList(),
+                automationStatus = "Recording discarded."
+            )
+        }
+    }
+
+    fun deleteAutomation(automation: BrowserAutomation) {
+        automationStore.delete(automation.id)
+        _uiState.update { it.copy(automations = automationStore.getAll()) }
+    }
+
+    fun runAutomation(automation: BrowserAutomation) {
+        if (!_uiState.value.isJavaScriptEnabled) {
+            _uiState.update { it.copy(automationStatus = "Enable JavaScript in Settings to run automations.") }
+            return
+        }
+        if (automation.steps.isEmpty()) {
+            _uiState.update { it.copy(automationStatus = "This automation has no recorded steps.") }
+            return
+        }
+
+        val runId = ++nextAutomationRunId
+        _uiState.update { state ->
+            val current = state.currentTab ?: return@update state
+            val startTab = if (current.isNewTabPage) {
+                current.copy(
+                    url = automation.startUrl,
+                    title = "Loading...",
+                    isLoading = true,
+                    progress = 10,
+                    navigationTrigger = current.navigationTrigger + 1L
+                )
+            } else current
+            val updatedState = if (state.isIncognitoViewActive) {
+                state.copy(
+                    incognitoTabs = state.incognitoTabs.map { if (it.id == current.id) startTab else it }
+                )
+            } else {
+                state.copy(
+                    regularTabs = state.regularTabs.map { if (it.id == current.id) startTab else it }
+                )
+            }
+            updatedState.copy(
+                isAutomationsOpen = false,
+                automationPlayback = AutomationPlayback(runId, current.id, automation),
+                automationStatus = "Running \"${automation.name}\"..."
+            )
+        }
+    }
+
+    fun onAutomationPlaybackFinished(runId: Long, result: String) {
+        _uiState.update { state ->
+            if (state.automationPlayback?.runId != runId) state
+            else state.copy(automationPlayback = null, automationStatus = result)
+        }
+    }
+
+    fun stopAutomationPlayback() {
+        _uiState.update {
+            if (it.automationPlayback == null) it
+            else it.copy(automationPlayback = null, automationStatus = "Automation stopped.")
+        }
+    }
+
     fun reloadCurrentTab() {
-        _uiState.update { it.copy(reloadTrigger = System.currentTimeMillis()) }
+        _uiState.update { it.copy(reloadTrigger = it.reloadTrigger + 1L) }
     }
 
     fun navigateBack() {
-        _uiState.update { it.copy(navigateBackTrigger = System.currentTimeMillis()) }
+        _uiState.update { it.copy(navigateBackTrigger = it.navigateBackTrigger + 1L) }
     }
 
     fun navigateForward() {
-        _uiState.update { it.copy(navigateForwardTrigger = System.currentTimeMillis()) }
+        _uiState.update { it.copy(navigateForwardTrigger = it.navigateForwardTrigger + 1L) }
     }
 
     fun toggleDesktopSite() {
@@ -484,6 +693,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun setDesktopSiteDefault(enabled: Boolean) {
         _uiState.update { it.copy(isDesktopSiteDefault = enabled) }
     }
+
+    private fun cancelAutomationPlayback(state: BrowserUiState, reason: String): BrowserUiState =
+        if (state.automationPlayback == null) state
+        else state.copy(automationPlayback = null, automationStatus = reason)
+
+    private fun sameNavigationUrl(first: String, second: String): Boolean =
+        first.substringBefore('#').trimEnd('/') == second.substringBefore('#').trimEnd('/')
 
     private fun updateTabState(tabId: String, transform: (BrowserTab) -> BrowserTab) {
         _uiState.update { state ->

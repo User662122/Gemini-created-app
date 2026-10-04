@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.DesktopWindows
@@ -68,6 +69,8 @@ fun ChromeOverflowMenu(
     onBack: () -> Unit,
     onForward: () -> Unit,
     onToggleBookmark: () -> Unit,
+    isRecordingAutomation: Boolean,
+    onAutomations: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     DropdownMenu(
@@ -283,6 +286,22 @@ fun ChromeOverflowMenu(
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        DropdownMenuItem(
+            text = { Text(if (isRecordingAutomation) "Automation recording…" else "Automations", fontSize = 14.sp) },
+            leadingIcon = {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
+            onClick = {
+                onAutomations()
+                onDismissRequest()
+            },
+            modifier = Modifier.testTag("menu_automations")
+        )
 
         // Settings
         DropdownMenuItem(

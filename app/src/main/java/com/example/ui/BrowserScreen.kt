@@ -17,7 +17,10 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
@@ -28,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.components.AutomationsDialog
 import com.example.ui.components.BookmarksDialog
 import com.example.ui.components.ChromeOmniboxSheet
 import com.example.ui.components.ChromeOverflowMenu
@@ -55,6 +59,14 @@ fun BrowserScreen(
     var showMenu by remember { mutableStateOf(false) }
     var findTriggerNext by remember { mutableLongStateOf(0L) }
     var findTriggerPrev by remember { mutableLongStateOf(0L) }
+    val automationSnackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.automationStatus, uiState.isRecordingAutomation, uiState.automationPlayback) {
+        val status = uiState.automationStatus
+        if (!status.isNullOrBlank() && !uiState.isRecordingAutomation && uiState.automationPlayback == null) {
+            automationSnackbarHostState.showSnackbar(status)
+        }
+    }
 
     val currentTab = uiState.currentTab
     val isIncognito = uiState.isIncognitoViewActive
@@ -68,6 +80,7 @@ fun BrowserScreen(
                 uiState.isBookmarksOpen ||
                 uiState.isHistoryOpen ||
                 uiState.isSettingsOpen ||
+                uiState.isAutomationsOpen ||
                 (currentTab?.canGoBack == true)
     ) {
         when {
@@ -76,6 +89,7 @@ fun BrowserScreen(
             uiState.isBookmarksOpen -> viewModel.setBookmarksVisible(false)
             uiState.isHistoryOpen -> viewModel.setHistoryVisible(false)
             uiState.isSettingsOpen -> viewModel.setSettingsVisible(false)
+            uiState.isAutomationsOpen -> viewModel.setAutomationsVisible(false)
             uiState.isTabSwitcherOpen -> viewModel.setTabSwitcherVisible(false)
             currentTab?.canGoBack == true -> viewModel.navigateBack()
         }
@@ -85,6 +99,7 @@ fun BrowserScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("browser_main_scaffold"),
+        snackbarHost = { SnackbarHost(automationSnackbarHostState) },
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { paddingValues ->
         val screenBg = if (isIncognito) IncognitoBg else MaterialTheme.colorScheme.background
@@ -140,7 +155,9 @@ fun BrowserScreen(
                         onReload = { viewModel.reloadCurrentTab() },
                         onBack = { viewModel.navigateBack() },
                         onForward = { viewModel.navigateForward() },
-                        onToggleBookmark = { viewModel.toggleBookmarkCurrentTab() }
+                        onToggleBookmark = { viewModel.toggleBookmarkCurrentTab() },
+                        isRecordingAutomation = uiState.isRecordingAutomation,
+                        onAutomations = { viewModel.setAutomationsVisible(true) }
                     )
                 }
 
@@ -181,6 +198,15 @@ fun BrowserScreen(
                                 findQuery = if (uiState.isFindInPageOpen) uiState.findQuery else "",
                                 findTriggerNext = findTriggerNext,
                                 findTriggerPrev = findTriggerPrev,
+                                isRecordingAutomation = uiState.isRecordingAutomation &&
+                                    currentTab.id == uiState.recordingAutomationTabId,
+                                automationPlayback = uiState.automationPlayback,
+                                onAutomationStepRecorded = { tabId, step ->
+                                    viewModel.onAutomationStepRecorded(tabId, step)
+                                },
+                                onAutomationPlaybackFinished = { runId, result ->
+                                    viewModel.onAutomationPlaybackFinished(runId, result)
+                                },
                                 onPageStarted = { id, url -> viewModel.onPageStarted(id, url) },
                                 onPageFinished = { id, url, title -> viewModel.onPageFinished(id, url, title) },
                                 onProgressChanged = { id, progress -> viewModel.onProgressChanged(id, progress) },
@@ -260,6 +286,26 @@ fun BrowserScreen(
                     onToggleDesktopDefault = { viewModel.setDesktopSiteDefault(it) },
                     onClearData = { viewModel.clearBrowsingData() },
                     onDismiss = { viewModel.setSettingsVisible(false) }
+                )
+            }
+
+            if (uiState.isAutomationsOpen) {
+                AutomationsDialog(
+                    automations = uiState.automations,
+                    currentUrl = currentTab?.takeUnless { it.isNewTabPage }?.url,
+                    isIncognito = isIncognito,
+                    isJavaScriptEnabled = uiState.isJavaScriptEnabled,
+                    isRecording = uiState.isRecordingAutomation,
+                    recordingStepCount = uiState.recordingAutomationSteps.size,
+                    runningAutomationName = uiState.automationPlayback?.automation?.name,
+                    statusMessage = uiState.automationStatus,
+                    onStartRecording = { viewModel.startAutomationRecording() },
+                    onSaveRecording = { viewModel.saveAutomationRecording(it) },
+                    onCancelRecording = { viewModel.cancelAutomationRecording() },
+                    onRunAutomation = { viewModel.runAutomation(it) },
+                    onDeleteAutomation = { viewModel.deleteAutomation(it) },
+                    onStopPlayback = { viewModel.stopAutomationPlayback() },
+                    onDismiss = { viewModel.setAutomationsVisible(false) }
                 )
             }
         }
