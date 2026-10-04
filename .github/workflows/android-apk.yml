@@ -54,9 +54,26 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Run unit tests
+        id: unit_tests
         run: |
           set -o pipefail
           gradle :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee app/build/ci-test.log
+
+      - name: Annotate unit test failure details
+        if: failure() && steps.unit_tests.outcome == 'failure'
+        env:
+          TEST_LOG: app/build/ci-test.log
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          lines = Path(os.environ["TEST_LOG"]).read_text(errors="replace").splitlines()
+          start = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), max(0, len(lines) - 80))
+          details = "\n".join(lines[start:])[-9000:]
+          escaped = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=Unit test failure::{escaped}")
+          PY
 
       - name: Upload unit test diagnostics
         if: failure()
