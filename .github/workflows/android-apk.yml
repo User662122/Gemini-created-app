@@ -70,7 +70,7 @@ jobs:
 
           lines = Path(os.environ["TEST_LOG"]).read_text(errors="replace").splitlines()
           start = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), max(0, len(lines) - 80))
-          details = "\n".join(lines[start:])[-9000:]
+          details = "\n".join(lines[start:start + 50])[:9000]
           escaped = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print(f"::error title=Unit test failure::{escaped}")
           PY
