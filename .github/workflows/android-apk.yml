@@ -65,13 +65,30 @@ jobs:
           TEST_LOG: app/build/ci-test.log
         run: |
           python3 - <<'PY'
+          import glob
           import os
+          import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          lines = Path(os.environ["TEST_LOG"]).read_text(errors="replace").splitlines()
-          start = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), max(0, len(lines) - 80))
-          details = "\n".join(lines[start:start + 50])[:9000]
-          escaped = details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          failures = []
+          for report in glob.glob("app/build/test-results/testDebugUnitTest/TEST-*.xml"):
+              root = ET.parse(report).getroot()
+              for case in root.iter("testcase"):
+                  for tag in ("failure", "error"):
+                      result = case.find(tag)
+                      if result is not None:
+                          name = f"{case.get('classname', '')}.{case.get('name', '')}"
+                          message = result.get("message", "")
+                          trace = (result.text or "").strip()
+                          failures.append(f"{name}: {message}{chr(10)}{trace[:5000]}")
+
+          if failures:
+              details = chr(10).join(failures)[:9000]
+          else:
+              lines = Path(os.environ["TEST_LOG"]).read_text(errors="replace").splitlines()
+              start = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), max(0, len(lines) - 80))
+              details = chr(10).join(lines[start:start + 50])[:9000]
+          escaped = details.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A")
           print(f"::error title=Unit test failure::{escaped}")
           PY
 
