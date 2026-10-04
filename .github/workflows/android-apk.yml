@@ -54,7 +54,21 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee app/build/ci-test.log
+
+      - name: Upload unit test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-diagnostics
+          path: |
+            app/build/ci-test.log
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload APK artifact
         if: always()
