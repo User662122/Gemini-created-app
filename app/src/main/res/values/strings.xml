@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Chrome</string>
+    <string name="search_or_type_url">Search or type URL</string>
+    <string name="tabs">Tabs</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="history">History</string>
+    <string name="new_tab">New tab</string>
+    <string name="new_incognito_tab">New incognito tab</string>
+    <string name="desktop_site">Desktop site</string>
+    <string name="find_in_page">Find in page</string>
+    <string name="settings">Settings</string>
+    <string name="share">Share</string>
+</resources>
