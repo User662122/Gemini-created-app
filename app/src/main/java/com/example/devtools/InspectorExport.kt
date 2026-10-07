@@ -220,7 +220,8 @@ object InspectorExport {
         put("id", entry.id)
         put("tabId", entry.tabId)
         put("state", entry.state.name)
-        put("recordedAtMillis", entry.recordedAtMillis)
+        // App clock only: this is when the inspector stored the row, never a page-supplied time.
+        put("recordedAtAppMillis", entry.recordedAtAppMillis)
         put("pageObserved", entry.pageObserved)
         put("notes", JSONArray(entry.notes))
         put("request", requestJson(entry.request))
