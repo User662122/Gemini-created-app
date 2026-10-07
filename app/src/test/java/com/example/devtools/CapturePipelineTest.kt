@@ -2,18 +2,23 @@ package com.example.devtools
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * End-to-end tests of the capture pipeline.
  *
  * `LiveNetworkObserver` deliberately depends on nothing from `android.*` (no Context, no WebView), so
- * the correlation logic — the part most likely to silently produce wrong pairings — is testable on a
- * plain JVM, without Robolectric and without a device.
+ * the correlation logic — the part most likely to silently produce wrong pairings — runs here without
+ * a device. Robolectric is needed only because the page-hook batches are parsed with `org.json`, which
+ * the plain JVM unit-test runtime stubs out.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class CapturePipelineTest {
 
     private val fullPolicy = CapturePolicy(
