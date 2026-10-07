@@ -190,7 +190,10 @@ deleted in one move.
 
 ## 7. Changes to existing files
 
-Six existing files are modified; nothing else in the app changes. In particular
+Six existing app files are modified (below), plus one CI file: `.github/workflows/android-apk.yml`
+now also captures the debug-build log, turns the first compiler errors into a "Debug build
+diagnostics" check run and uploads the log with the other diagnostics — useful whenever a change is
+only verifiable in CI. Nothing else in the app changes; in particular
 `app/src/main/AndroidManifest.xml` is **not** touched — the inspector adds no permission, service,
 activity or receiver.
 
