@@ -98,6 +98,7 @@ jobs:
         with:
           name: android-unit-test-diagnostics
           path: |
+            app/build/ci-build.log
             app/build/ci-test.log
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/
