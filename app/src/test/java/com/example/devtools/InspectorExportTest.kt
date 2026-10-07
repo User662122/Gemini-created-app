@@ -51,7 +51,8 @@ class InspectorExportTest {
         observer.onResponseReceived(
             ResponseObservation(
                 tabId = "tab",
-                url = "https://example.com/api/items",
+                // Same URL and method as the request above: this is what the correlation keys match on.
+                url = "https://example.com/api/items?access_token=supersecret&page=2",
                 method = "POST",
                 statusCode = 201,
                 reasonPhrase = "Created",
