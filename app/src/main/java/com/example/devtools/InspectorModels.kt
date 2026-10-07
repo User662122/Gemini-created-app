@@ -232,6 +232,12 @@ data class ResponseRecord(
     val durationMillis: Long?,
     /** Network-level failure text (`WebResourceError` / fetch rejection), or null when there was none. */
     val errorDescription: InspectorValue<String>? = null,
+    /**
+     * Preview of the response body. Only ever present when the *page* read a text body through the
+     * injected `fetch`/XHR hooks and response-body capture is switched on; bodies of resources WebView
+     * fetched for itself are not available to the app and are reported as such.
+     */
+    val body: BodyRecord? = null,
 )
 
 data class NetworkEntry(

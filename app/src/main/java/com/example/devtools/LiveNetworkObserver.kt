@@ -514,7 +514,6 @@ class LiveNetworkObserver(
                 category = refined.category,
                 categorySource = refined.source,
                 categoryDetail = refined.detail,
-                body = entry.request.body ?: observation.body,
             ),
             response = response,
             state = if (observation.failureText != null) EntryState.FAILED else EntryState.RECEIVED,
@@ -639,6 +638,7 @@ class LiveNetworkObserver(
             errorDescription = observation.failureText?.let {
                 InspectorValue.known(it, observation.observedVia)
             },
+            body = observation.body,
         )
     }
 
@@ -731,7 +731,12 @@ class LiveNetworkObserver(
             hasGesture = null,
             headers = emptyMap(),
             headersReport = HeadersReport.UNKNOWN,
-            initiator = observation.initiator,
+            // A response carries no initiator of its own, so it is derived from the main-frame flag.
+            initiator = if (observation.isForMainFrame == true) {
+                Initiator.DOCUMENT_NAVIGATION
+            } else {
+                Initiator.RESOURCE_LOAD
+            },
             observedVia = observation.observedVia,
         )
     }

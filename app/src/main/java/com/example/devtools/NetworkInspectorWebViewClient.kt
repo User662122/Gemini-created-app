@@ -52,7 +52,7 @@ open class NetworkInspectorWebViewClient(
                         timeSource = EvidenceSource.APP_CLOCK,
                         isForMainFrame = request.isForMainFrame,
                         isRedirect = request.isRedirect,
-                        hasGesture = request.hasGesture,
+                        hasGesture = request.hasGesture(),
                         headers = request.requestHeaders ?: emptyMap(),
                         headersReport = HeadersReport.WEBVIEW_SUBSET,
                         initiator = if (request.isForMainFrame) {

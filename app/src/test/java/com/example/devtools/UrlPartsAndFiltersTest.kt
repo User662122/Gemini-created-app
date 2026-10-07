@@ -44,7 +44,7 @@ class UrlPartsTest {
 
     @Test
     fun `default cookie path follows RFC 6265`() {
-        assertEquals("/a", UrlParts.defaultCookiePath("https://example.com/a/b/c"))
+        assertEquals("/a/b", UrlParts.defaultCookiePath("https://example.com/a/b/c"))
         assertEquals("/", UrlParts.defaultCookiePath("https://example.com/"))
         assertEquals("/", UrlParts.defaultCookiePath("https://example.com"))
     }
