@@ -40,16 +40,23 @@ object UrlParts {
         return host.ifBlank { null }?.lowercase()
     }
 
-    /** Path portion, defaulting to "/". Query and fragment are removed. */
+    /**
+     * Path portion, defaulting to "/". The authority ("//host:port"), query and fragment are removed.
+     *
+     * The authority has to be dropped first: in `https://example.com/a/b` the first slash belongs to
+     * the "//" that introduces the host, not to the path.
+     */
     fun path(url: String): String {
         val scheme = scheme(url)
-        val afterScheme = if (scheme != null) url.substring(scheme.length + 1) else url
-        val searchStart = afterScheme.indexOfFirst { it == '?' || it == '#' }
-        val withoutQuery = if (searchStart >= 0) afterScheme.substring(0, searchStart) else afterScheme
-        val slash = withoutQuery.indexOf('/')
-        if (slash < 0) return "/"
-        val path = withoutQuery.substring(slash)
-        return path.ifBlank { "/" }
+        var rest = if (scheme != null) url.substring(scheme.length + 1) else url
+        if (scheme != null && !rest.startsWith("/")) return "/" // opaque URL, e.g. data: or mailto:
+        if (rest.startsWith("//")) {
+            val pathStart = rest.indexOf('/', startIndex = 2)
+            rest = if (pathStart < 0) "" else rest.substring(pathStart)
+        }
+        val searchStart = rest.indexOfFirst { it == '?' || it == '#' }
+        val withoutQuery = if (searchStart >= 0) rest.substring(0, searchStart) else rest
+        return withoutQuery.ifBlank { "/" }
     }
 
     /**
