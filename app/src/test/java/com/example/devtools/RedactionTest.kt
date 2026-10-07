@@ -13,7 +13,7 @@ import org.junit.Test
 class RedactionTest {
 
     @Test
-    fun `authorization header is masked and its raw value is dropped in safe mode`() {
+    fun `with full capture off, an authorization header is masked and its value dropped`() {
         val field = Redaction.headerField(
             name = "Authorization",
             value = "Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz",
@@ -22,21 +22,27 @@ class RedactionTest {
 
         assertTrue(field.isRedacted)
         assertFalse(field.display.contains("eyJhbGciOiJIUzI1NiJ9"))
-        assertNull("raw value must not be stored when raw capture is off", field.raw)
+        assertNull("raw value must not be stored while full capture is off", field.raw)
         assertFalse(field.canReveal)
     }
 
     @Test
-    fun `authorization header keeps a revealable raw value when raw capture is on`() {
-        val field = Redaction.headerField(
+    fun `a company-specific token header is recognised as sensitive`() {
+        val masked = Redaction.headerField(
+            name = "X-Company-Auth-Token",
+            value = "s3cr3t-value",
+            revealSensitiveValues = false,
+        )
+        val revealed = Redaction.headerField(
             name = "X-Company-Auth-Token",
             value = "s3cr3t-value",
             revealSensitiveValues = true,
         )
 
-        assertTrue(field.isRedacted)
-        assertEquals("s3cr3t-value", field.raw)
-        assertTrue(field.canReveal)
+        assertTrue("a *-token header must be treated as sensitive", masked.isRedacted)
+        assertFalse(masked.display.contains("s3cr3t-value"))
+        assertTrue(revealed.isRevealedSensitive)
+        assertEquals("s3cr3t-value", revealed.display)
     }
 
     @Test
@@ -147,7 +153,7 @@ class RedactionTest {
     }
 
     @Test
-    fun `cookie values are summarised, never stored`() {
+    fun `maskCookieValue keeps only a length summary`() {
         val masked = Redaction.maskCookieValue("session=abcdef123456")
 
         assertFalse(masked.contains("abcdef123456"))
