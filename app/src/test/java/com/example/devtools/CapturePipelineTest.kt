@@ -301,15 +301,40 @@ class CapturePipelineTest {
     @Test
     fun `the ring buffer evicts oldest rows and reports how many were dropped`() {
         val observer = newObserver()
+        val store = observer.store
+        val now = System.currentTimeMillis()
 
+        // Written straight into the store: this asserts the buffer's own limits, not the observer's
+        // message rate limit (which is covered by the test below).
         repeat(InspectorLimits.MAX_ENTRIES + 10) { index ->
-            observer.onRequestStarted(requestObservation("https://example.com/item/$index"))
+            store.addEntry(
+                networkEntry(
+                    id = store.allocateEntryId(),
+                    url = "https://example.com/item/$index",
+                    recordedAtAppMillis = now + index,
+                )
+            )
         }
 
-        assertEquals(InspectorLimits.MAX_ENTRIES, observer.store.entryCount())
-        assertEquals(10, observer.store.droppedCounts().first)
+        assertEquals(InspectorLimits.MAX_ENTRIES, store.entryCount())
+        assertEquals(10, store.droppedCounts().first)
         // Newest first, and the oldest rows are the ones that went away.
         assertEquals("https://example.com/item/${InspectorLimits.MAX_ENTRIES + 9}", entries(observer)[0].url)
+        assertTrue(entries(observer).none { it.url == "https://example.com/item/0" })
+    }
+
+    @Test
+    fun `a request storm is rate limited and the excess is counted, not queued`() {
+        val observer = newObserver()
+
+        repeat(InspectorLimits.MAX_MESSAGES_PER_SECOND + 290) { index ->
+            observer.onRequestStarted(requestObservation("https://example.com/storm/$index"))
+        }
+
+        // A page cannot push the app into unbounded work: the per-second budget caps what is stored,
+        // and everything above it is dropped and reported.
+        assertTrue(observer.store.entryCount() <= InspectorLimits.MAX_MESSAGES_PER_SECOND)
+        assertTrue(observer.droppedByRateLimit() >= 200)
     }
 
     @Test
@@ -357,26 +382,12 @@ class CapturePipelineTest {
         val now = System.currentTimeMillis()
 
         store.addEntry(
-            NetworkEntry(
+            networkEntry(
                 id = store.allocateEntryId(),
-                tabId = "tab",
-                request = RequestRecord(
-                    url = "https://example.com/cached.png",
-                    method = "GET",
-                    startedAtMillis = now - 60_000,
-                    startedAtSource = EvidenceSource.APP_CLOCK,
-                    isForMainFrame = false,
-                    isRedirect = null,
-                    hasGesture = null,
-                    headers = emptyList(),
-                    headersCompleteness = HeaderCompleteness.SUBSET_REPORTED_BY_WEBVIEW,
-                    body = null,
-                    category = ResourceCategory.IMAGE,
-                    categorySource = EvidenceSource.DERIVED,
-                    categoryDetail = null,
-                    initiator = Initiator.RESOURCE_LOAD,
-                ),
+                url = "https://example.com/cached.png",
+                category = ResourceCategory.IMAGE,
                 recordedAtAppMillis = now - 60_000,
+                startedAtMillis = now - 60_000,
             )
         )
 
@@ -386,6 +397,34 @@ class CapturePipelineTest {
         assertEquals(EntryState.UNOBSERVED, entry.state)
         assertTrue(entry.notes.contains(InspectorExplanations.RESPONSE_NEVER_OBSERVED))
     }
+
+    private fun networkEntry(
+        id: Long,
+        url: String,
+        category: ResourceCategory = ResourceCategory.XHR_FETCH,
+        recordedAtAppMillis: Long = System.currentTimeMillis(),
+        startedAtMillis: Long = System.currentTimeMillis(),
+    ): NetworkEntry = NetworkEntry(
+        id = id,
+        tabId = "tab",
+        request = RequestRecord(
+            url = url,
+            method = "GET",
+            startedAtMillis = startedAtMillis,
+            startedAtSource = EvidenceSource.APP_CLOCK,
+            isForMainFrame = false,
+            isRedirect = null,
+            hasGesture = null,
+            headers = emptyList(),
+            headersCompleteness = HeaderCompleteness.SUBSET_REPORTED_BY_WEBVIEW,
+            body = null,
+            category = category,
+            categorySource = EvidenceSource.DERIVED,
+            categoryDetail = null,
+            initiator = Initiator.RESOURCE_LOAD,
+        ),
+        recordedAtAppMillis = recordedAtAppMillis,
+    )
 
     @Test
     fun `the observer does nothing at all when capture is disabled`() {
