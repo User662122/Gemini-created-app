@@ -146,7 +146,7 @@ class InspectorExportTest {
         assertEquals("full", root.getString("captureMode"))
         assertTrue(root.getBoolean("unmaskedValuesIncluded"))
         assertTrue("the buffer revision is part of the document", root.has("revision"))
-        assertTrue(root.getInt("dropped") >= 0)
+        assertEquals(0, root.getJSONObject("dropped").getInt("entries"))
         assertEquals(1, root.getJSONArray("entries").length())
         assertEquals(1, root.getJSONArray("console").length())
         assertTrue(root.getJSONArray("capabilities").length() > 5)
