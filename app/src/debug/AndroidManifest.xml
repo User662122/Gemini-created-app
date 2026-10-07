@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay.
+
+  It adds nothing except the Application subclass that installs the developer tools runtime (Network
+  Inspector). Because this file lives in the debug source set, release builds keep the plain
+  Application from the main manifest and can never reach the inspector.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:name="com.example.devtools.DebugBrowserApplication" />
+</manifest>

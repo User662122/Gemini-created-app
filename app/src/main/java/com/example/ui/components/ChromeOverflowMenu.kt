@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.History
@@ -71,6 +72,11 @@ fun ChromeOverflowMenu(
     onToggleBookmark: () -> Unit,
     isRecordingAutomation: Boolean,
     onAutomations: () -> Unit,
+    /**
+     * Opens the developer Network Inspector. Null in any build where the inspector is unavailable
+     * (release builds, non-debuggable packages), in which case the menu entry is not rendered at all.
+     */
+    onNetworkInspector: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     DropdownMenu(
@@ -284,6 +290,26 @@ fun ChromeOverflowMenu(
             },
             modifier = Modifier.testTag("menu_desktop_site")
         )
+
+        if (onNetworkInspector != null) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            DropdownMenuItem(
+                text = { Text("Network Inspector (debug)", fontSize = 14.sp) },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.BugReport,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                onClick = {
+                    onNetworkInspector()
+                    onDismissRequest()
+                },
+                modifier = Modifier.testTag("menu_network_inspector")
+            )
+        }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 

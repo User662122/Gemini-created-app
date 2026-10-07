@@ -7,12 +7,10 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +36,12 @@ import com.example.data.model.AutomationAction
 import com.example.data.model.AutomationPlayback
 import com.example.data.model.AutomationStep
 import com.example.data.model.BrowserTab
+import com.example.devtools.InspectorJsBridge
+import com.example.devtools.InspectorMessage
+import com.example.devtools.InspectorRuntime
+import com.example.devtools.InspectorScripts
+import com.example.devtools.NetworkInspectorWebChromeClient
+import com.example.devtools.NetworkInspectorWebViewClient
 import com.example.ui.theme.IncognitoBg
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -71,6 +75,10 @@ fun WebViewContainer(
     findTriggerPrev: Long,
     isRecordingAutomation: Boolean,
     automationPlayback: AutomationPlayback?,
+    /** Developer-mode Network Inspector. Always present; a release build resolves to a no-op. */
+    inspector: InspectorRuntime,
+    /** Changes when the inspector's settings change, so the page hooks are re-installed. */
+    inspectorScriptToken: Long,
     onAutomationStepRecorded: (String, AutomationStep) -> Unit,
     onAutomationPlaybackFinished: (Long, String) -> Unit,
     onPageStarted: (String, String) -> Unit,
@@ -161,6 +169,18 @@ fun WebViewContainer(
             if (isRecordingAutomation) AutomationRecorderScripts.START else AutomationRecorderScripts.STOP,
             null
         )
+    }
+
+    // Install (or refresh) the Network Inspector's page hooks. Keyed on the page-finish counter so a
+    // new document gets the hooks, and on the script token so a settings change reaches open tabs.
+    // evaluateJavascript runs on the UI thread, and the script itself does no work unless the page
+    // actually performs a fetch/XHR/console call.
+    LaunchedEffect(webViewInstance, pageFinishCount, inspectorScriptToken) {
+        val webView = webViewInstance ?: return@LaunchedEffect
+        val script = if (inspector.enabled) inspector.installScript() else InspectorScripts.DISABLE
+        if (script.isNotEmpty()) {
+            webView.evaluateJavascript(script, null)
+        }
     }
 
     LaunchedEffect(findQuery) {
@@ -330,7 +350,19 @@ fun WebViewContainer(
                             AUTOMATION_BRIDGE_NAME
                         )
 
-                        webViewClient = object : WebViewClient() {
+                        // The inspector's bridge is exposed to pages only when this build carries the
+                        // inspector at all (never in release builds). It is removed in onDispose. The
+                        // page hooks are what actually decide whether anything is ever pushed.
+                        if (inspector.uiState.value.available) {
+                            addJavascriptInterface(
+                                InspectorJsBridge { payload ->
+                                    inspector.dispatch(InspectorMessage.PageRecords(tab.id, payload))
+                                },
+                                InspectorScripts.BRIDGE_NAME
+                            )
+                        }
+
+                        webViewClient = object : NetworkInspectorWebViewClient(tab.id, inspector) {
                             override fun shouldOverrideUrlLoading(
                                 view: WebView?,
                                 request: WebResourceRequest?
@@ -385,6 +417,9 @@ fun WebViewContainer(
                                 view: WebView?,
                                 detail: RenderProcessGoneDetail?
                             ): Boolean {
+                                // Let the inspector record that every in-flight request of this tab is
+                                // now unobservable before the view is torn down.
+                                super.onRenderProcessGone(view, detail)
                                 automationPlaybackReference.get()?.let { playback ->
                                     if (playback.tabId == tab.id) {
                                         onAutomationPlaybackFinished(
@@ -405,7 +440,7 @@ fun WebViewContainer(
                             }
                         }
 
-                        webChromeClient = object : WebChromeClient() {
+                        webChromeClient = object : NetworkInspectorWebChromeClient(tab.id, inspector) {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 super.onProgressChanged(view, newProgress)
                                 onProgressChanged(tab.id, newProgress)
@@ -438,9 +473,11 @@ fun WebViewContainer(
             webViewInstance?.let { webView ->
                 webView.stopLoading()
                 webView.removeJavascriptInterface(AUTOMATION_BRIDGE_NAME)
+                webView.removeJavascriptInterface(InspectorScripts.BRIDGE_NAME)
                 (webView.parent as? ViewGroup)?.removeView(webView)
                 webView.destroy()
             }
+            inspector.dispatch(InspectorMessage.WebViewDestroyed(tab.id))
             webViewInstance = null
         }
     }

@@ -1,0 +1,121 @@
+package com.example.devtools
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * Everything a WebView callback needs to talk to the inspector.
+ *
+ * The messages are plain data classes so the WebView integration can stay a thin adapter: the client
+ * subclasses build an observation and hand it over, and all the logic lives behind this interface.
+ */
+sealed class InspectorMessage {
+    data class RequestStarted(val observation: RequestObservation) : InspectorMessage()
+    data class ResponseReceived(val observation: ResponseObservation) : InspectorMessage()
+    data class RequestFailed(val observation: FailureObservation) : InspectorMessage()
+    data class HttpError(val observation: HttpErrorObservation) : InspectorMessage()
+    data class AuthChallenge(val observation: AuthObservation) : InspectorMessage()
+    data class PageRecords(val tabId: String, val json: String) : InspectorMessage()
+    data class Console(
+        val tabId: String,
+        val level: ConsoleLevel,
+        val message: String,
+        val source: String?,
+        val lineNumber: Int?,
+    ) : InspectorMessage()
+
+    data class AppHttpExchange(
+        val request: RequestObservation,
+        val response: ResponseObservation,
+    ) : InspectorMessage()
+
+    data class DocumentStarted(val tabId: String) : InspectorMessage()
+    data class DocumentFinished(val tabId: String, val url: String?, val title: String?) : InspectorMessage()
+    data class CookieStoreChanged(val url: String?) : InspectorMessage()
+    data class WebViewDestroyed(val tabId: String) : InspectorMessage()
+}
+
+/**
+ * The inspector as the rest of the app sees it.
+ *
+ * Two implementations exist: [InspectorController] (debug builds, real capture) and
+ * [NullInspectorRuntime] (release builds and any build where the inspector is switched off). The UI
+ * and the WebView integration are written against this interface only, so a release build cannot
+ * reach capture code even by accident.
+ */
+interface InspectorRuntime {
+
+    /** The observer handed to the WebView clients. Always safe to call. */
+    val observer: NetworkObserver
+
+    /** True while the inspector is capturing. */
+    val enabled: Boolean
+
+    /** Changes whenever the injected script must be re-evaluated (settings changes). */
+    val scriptToken: Long
+
+    val uiState: StateFlow<InspectorUiState>
+
+    fun installScript(): String
+
+    fun dispatch(message: InspectorMessage)
+
+    fun attachCookieScopeProvider(provider: CookieScopeProvider)
+
+    /** Tells the inspector which tab is on screen; used for tab scoping and cookie queries. */
+    fun setCurrentTab(tabId: String)
+
+    /** Keeps the publishing ticker idle while no inspector screen is open. */
+    fun setScreensVisible(visible: Boolean)
+
+    fun setSetting(setting: InspectorSetting, value: Boolean)
+
+    fun updateFilter(filter: InspectorFilterState)
+
+    fun clearEntries()
+
+    fun clearConsole()
+
+    fun clearAll()
+
+    fun openEntry(id: Long)
+
+    fun closeEntry()
+
+    fun refreshCookies()
+
+    fun endSession()
+
+    fun close()
+}
+
+/** No-op runtime: release builds, non-debuggable packages, and "inspector switched off". */
+object NullInspectorRuntime : InspectorRuntime {
+
+    private val emptyState = MutableStateFlow(
+        InspectorUiState(available = false, unavailableReason = DevToolsGate.unavailableReason())
+    )
+
+    override val observer: NetworkObserver = NullNetworkObserver
+    override val enabled: Boolean = false
+    override val scriptToken: Long = 0L
+    override val uiState: StateFlow<InspectorUiState> = emptyState
+
+    override fun installScript(): String = ""
+    override fun dispatch(message: InspectorMessage) = Unit
+    override fun attachCookieScopeProvider(provider: CookieScopeProvider) = Unit
+    override fun setCurrentTab(tabId: String) = Unit
+    override fun setScreensVisible(visible: Boolean) = Unit
+    override fun setSetting(setting: InspectorSetting, value: Boolean) = Unit
+    override fun updateFilter(filter: InspectorFilterState) = Unit
+    override fun clearEntries() = Unit
+    override fun clearConsole() = Unit
+    override fun clearAll() = Unit
+    override fun openEntry(id: Long) = Unit
+    override fun closeEntry() = Unit
+    override fun refreshCookies() = Unit
+    override fun endSession() = Unit
+    override fun close() = Unit
+}
+
+

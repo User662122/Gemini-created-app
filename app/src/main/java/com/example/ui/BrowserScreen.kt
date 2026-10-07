@@ -44,14 +44,18 @@ import com.example.ui.components.TabSwitcherSheet
 import com.example.ui.components.WebViewContainer
 import com.example.ui.theme.ChromeDarkBg
 import com.example.ui.theme.IncognitoBg
+import com.example.devtools.InspectorRuntime
+import com.example.devtools.ui.NetworkInspectorScreen
 
 @Composable
 fun BrowserScreen(
     viewModel: BrowserViewModel,
+    inspector: InspectorRuntime,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val inspectorState by inspector.uiState.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.searchSuggestions.collectAsStateWithLifecycle()
@@ -59,7 +63,24 @@ fun BrowserScreen(
     var showMenu by remember { mutableStateOf(false) }
     var findTriggerNext by remember { mutableLongStateOf(0L) }
     var findTriggerPrev by remember { mutableLongStateOf(0L) }
+    var isNetworkInspectorOpen by remember { mutableStateOf(false) }
     val automationSnackbarHostState = remember { SnackbarHostState() }
+
+    // The inspector's publishing ticker only runs while its screens are on screen, so browsing with
+    // the inspector closed costs nothing extra.
+    LaunchedEffect(isNetworkInspectorOpen) {
+        inspector.setScreensVisible(isNetworkInspectorOpen)
+    }
+
+    // Tab scoping and cookie queries follow the visible tab.
+    val activeTabId = uiState.currentTab?.id
+    LaunchedEffect(activeTabId) {
+        if (activeTabId != null) inspector.setCurrentTab(activeTabId)
+    }
+
+    LaunchedEffect(Unit) {
+        inspector.attachCookieScopeProvider(viewModel.cookieScopeProvider)
+    }
 
     LaunchedEffect(uiState.automationStatus, uiState.isRecordingAutomation, uiState.automationPlayback) {
         val status = uiState.automationStatus
@@ -81,9 +102,14 @@ fun BrowserScreen(
                 uiState.isHistoryOpen ||
                 uiState.isSettingsOpen ||
                 uiState.isAutomationsOpen ||
+                isNetworkInspectorOpen ||
                 (currentTab?.canGoBack == true)
     ) {
         when {
+            // The inspector sits above every other surface, so it consumes back first: the detail
+            // sheet closes before the inspector itself.
+            isNetworkInspectorOpen && inspectorState.openEntry != null -> inspector.closeEntry()
+            isNetworkInspectorOpen -> isNetworkInspectorOpen = false
             uiState.isOmniboxEditing -> viewModel.setOmniboxEditing(false)
             uiState.isFindInPageOpen -> viewModel.setFindInPageVisible(false)
             uiState.isBookmarksOpen -> viewModel.setBookmarksVisible(false)
@@ -157,7 +183,12 @@ fun BrowserScreen(
                         onForward = { viewModel.navigateForward() },
                         onToggleBookmark = { viewModel.toggleBookmarkCurrentTab() },
                         isRecordingAutomation = uiState.isRecordingAutomation,
-                        onAutomations = { viewModel.setAutomationsVisible(true) }
+                        onAutomations = { viewModel.setAutomationsVisible(true) },
+                        onNetworkInspector = if (inspectorState.available) {
+                            { isNetworkInspectorOpen = true }
+                        } else {
+                            null
+                        }
                     )
                 }
 
@@ -201,6 +232,8 @@ fun BrowserScreen(
                                 isRecordingAutomation = uiState.isRecordingAutomation &&
                                     currentTab.id == uiState.recordingAutomationTabId,
                                 automationPlayback = uiState.automationPlayback,
+                                inspector = inspector,
+                                inspectorScriptToken = inspectorState.scriptToken,
                                 onAutomationStepRecorded = { tabId, step ->
                                     viewModel.onAutomationStepRecorded(tabId, step)
                                 },
@@ -286,6 +319,23 @@ fun BrowserScreen(
                     onToggleDesktopDefault = { viewModel.setDesktopSiteDefault(it) },
                     onClearData = { viewModel.clearBrowsingData() },
                     onDismiss = { viewModel.setSettingsVisible(false) }
+                )
+            }
+
+            // 6. Developer Network Inspector (debug builds only; never reachable in release)
+            if (isNetworkInspectorOpen && inspectorState.available) {
+                NetworkInspectorScreen(
+                    state = inspectorState,
+                    onClose = { isNetworkInspectorOpen = false },
+                    onFilterChange = { inspector.updateFilter(it) },
+                    onOpenEntry = { inspector.openEntry(it) },
+                    onCloseEntry = { inspector.closeEntry() },
+                    onClearEntries = { inspector.clearEntries() },
+                    onClearConsole = { inspector.clearConsole() },
+                    onClearAll = { inspector.clearAll() },
+                    onRefreshCookies = { inspector.refreshCookies() },
+                    onSettingChange = { setting, value -> inspector.setSetting(setting, value) },
+                    onEndSession = { inspector.endSession() },
                 )
             }
 

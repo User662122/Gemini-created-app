@@ -40,6 +40,16 @@ android {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
+
+      // The developer Network Inspector is hard-disabled for release builds. Together with
+      // BuildConfig.DEBUG (false here) and ApplicationInfo.FLAG_DEBUGGABLE (false for a release
+      // certificate) this makes the inspector unreachable in production, and R8 can strip it.
+      buildConfigField("boolean", "NETWORK_INSPECTOR_ENABLED", "false")
+    }
+    debug {
+      // Debug builds carry the inspector, plus the debug-only Application subclass in
+      // app/src/debug/ that installs it. Set this to "false" to switch the feature off entirely.
+      buildConfigField("boolean", "NETWORK_INSPECTOR_ENABLED", "true")
     }
   }
   compileOptions {

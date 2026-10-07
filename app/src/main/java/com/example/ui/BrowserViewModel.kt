@@ -14,6 +14,7 @@ import com.example.data.model.Bookmark
 import com.example.data.model.BrowserAutomation
 import com.example.data.model.BrowserTab
 import com.example.data.model.HistoryItem
+import com.example.devtools.CookieScopeProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +100,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // Combined query suggestions (matching bookmarks, history, and search engine)
     private val _searchSuggestions = MutableStateFlow<List<SuggestionItem>>(emptyList())
     val searchSuggestions: StateFlow<List<SuggestionItem>> = _searchSuggestions.asStateFlow()
+
+    /**
+     * Tells the developer Network Inspector which URLs to ask `CookieManager` about.
+     *
+     * Only the visible tab's current page is offered here; the inspector adds the origins it has
+     * already seen in that tab's traffic, so a page's own cookie scope is always included without the
+     * inspector having to guess.
+     */
+    val cookieScopeProvider: CookieScopeProvider = object : CookieScopeProvider {
+        override fun cookieQueryUrls(tabId: String): List<String> {
+            val current = uiState.value.currentTab ?: return emptyList()
+            if (current.id != tabId || current.isNewTabPage) return emptyList()
+            return listOf(current.url)
+        }
+    }
 
     init {
         val database = BrowserDatabase.getDatabase(application)
