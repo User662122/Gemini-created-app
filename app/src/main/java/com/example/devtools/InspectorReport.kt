@@ -1,19 +1,20 @@
 package com.example.devtools
 
 /**
- * Turns inspector data into plain text for "Copy" and "Share".
+ * Text form of a single captured entry, used by the detail screen's Copy/Share actions and by the
+ * session export.
  *
- * Two rules:
+ * Two rules make the output trustworthy:
  *
- *  * the text contains only what the inspector really observed — masked values stay masked unless raw
- *    capture is on, which is why [entryReport] takes that flag;
- *  * every "not available" line carries its reason, so a shared report cannot be misread as evidence
- *    that a field was empty.
+ *  * a field that is missing prints the *reason* it is missing, never a guess;
+ *  * when full capture was off at capture time the values are already masked in the buffer, and the
+ *    report says so instead of pretending the entry is complete.
+ *
+ * Session-level exports live in [InspectorExport], which reuses [entryReport].
  */
 object InspectorReport {
 
-    /** Report for a single request/response pair. */
-    fun entryReport(entry: NetworkEntry, rawCapture: Boolean): String = buildString {
+    fun entryReport(entry: NetworkEntry, revealSensitiveValues: Boolean): String = buildString {
         appendLine("Network Inspector entry #${entry.id}")
         appendLine("Captured by a debug build of this app. Fields marked \"not available\" are not exposed by WebView.")
         appendLine()
@@ -27,8 +28,8 @@ object InspectorReport {
         appendLine("  Resource type: ${entry.request.category.label} (${entry.request.categorySource.label})")
         entry.request.categoryDetail?.let { appendLine("  Type evidence: $it") }
         appendLine("  Headers (${entry.request.headersCompleteness.label}):")
-        appendHeaders(this, entry.request.headers, rawCapture)
-        appendBody(this, "  Request body", entry.request.body, rawCapture, InspectorExplanations.REQUEST_BODY_UNAVAILABLE)
+        appendHeaders(this, entry.request.headers, revealSensitiveValues)
+        appendBody(this, "  Request body", entry.request.body, revealSensitiveValues, InspectorExplanations.REQUEST_BODY_UNAVAILABLE)
         appendLine()
         appendLine("RESPONSE")
         val response = entry.response
@@ -45,8 +46,8 @@ object InspectorReport {
             response.durationMillis?.let { appendLine("  Duration:      ${it} ms") }
             response.errorDescription?.value?.let { appendLine("  Failure:       $it") }
             appendLine("  Headers:")
-            appendHeaders(this, response.headers, rawCapture)
-            appendBody(this, "  Response body", response.body, rawCapture, InspectorExplanations.RESPONSE_BODY_UNAVAILABLE)
+            appendHeaders(this, response.headers, revealSensitiveValues)
+            appendBody(this, "  Response body", response.body, revealSensitiveValues, InspectorExplanations.RESPONSE_BODY_UNAVAILABLE)
         }
         appendLine()
         appendLine("STATE: ${entry.state}")
@@ -61,34 +62,22 @@ object InspectorReport {
     fun shortEntry(entry: NetworkEntry): String =
         "${entry.method} ${entry.response?.statusCode?.value ?: "—"} ${entry.url}"
 
-    /** Session report: everything the buffers hold, plus the inspector's own limits. */
-    fun sessionReport(snapshot: InspectorSnapshot, console: List<ConsoleEntry>, rawCapture: Boolean): String =
-        buildString {
-            appendLine("Network Inspector session report")
-            appendLine("Entries: ${snapshot.entries.size} (dropped: ${snapshot.droppedEntryCount})")
-            appendLine("Console lines: ${console.size}")
-            appendLine()
-            snapshot.entries.asReversed().forEach { entry ->
-                appendLine(entryReport(entry, rawCapture))
-                appendLine("-".repeat(60))
-            }
-            if (console.isNotEmpty()) {
-                appendLine("CONSOLE")
-                console.asReversed().forEach { line ->
-                    appendLine("[${line.level.label}] ${line.message}")
-                    line.source?.let { appendLine("    at $it${line.lineNumber?.let { n -> ":$n" } ?: ""}") }
-                }
-            }
-        }
-
-    private fun appendHeaders(target: StringBuilder, headers: List<HttpField>, rawCapture: Boolean) {
+    private fun appendHeaders(
+        target: StringBuilder,
+        headers: List<HttpField>,
+        revealSensitiveValues: Boolean,
+    ) {
         if (headers.isEmpty()) {
             target.appendLine("    (none reported)")
             return
         }
         headers.forEach { field ->
-            val value = if (rawCapture && field.canReveal) field.raw else field.display
-            target.appendLine("    ${field.name}: $value")
+            // `display` is the real value whenever full capture is on; when it was off the value was
+            // replaced before it was ever stored, so there is nothing else to print here.
+            target.appendLine("    ${field.name}: ${field.display}")
+            if (field.isRedacted && revealSensitiveValues) {
+                target.appendLine("      (stored masked: full capture was off when this was captured)")
+            }
         }
     }
 
@@ -96,7 +85,7 @@ object InspectorReport {
         target: StringBuilder,
         label: String,
         body: BodyRecord?,
-        rawCapture: Boolean,
+        revealSensitiveValues: Boolean,
         unavailableReason: String,
     ) {
         if (body == null) {
@@ -108,10 +97,12 @@ object InspectorReport {
             target.appendLine("$label: ${body.preview.note ?: unavailableReason}")
             return
         }
-        target.appendLine("$label (${body.kind}, reported size ${body.reportedLength ?: "unknown"}" +
-            if (body.truncated) ", truncated)" else ")")
+        target.appendLine(
+            "$label (${body.kind}, reported size ${body.reportedLength ?: "unknown"}" +
+                if (body.truncated) ", truncated)" else ")"
+        )
         target.appendLine(preview)
-        if (!rawCapture) {
+        if (!revealSensitiveValues) {
             target.appendLine("    note: ${InspectorExplanations.MASKED_BY_POLICY}")
         }
     }

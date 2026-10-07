@@ -21,9 +21,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.devtools.ExportFormat
 import com.example.devtools.InspectorSetting
 import com.example.devtools.InspectorUiState
-import com.example.devtools.ui.theme.InspectorRed
 
 /**
  * Settings and, more importantly, the honest capability summary: which parts of a request/response
@@ -36,6 +36,7 @@ fun InspectorInfoTab(
     onSettingChange: (InspectorSetting, Boolean) -> Unit,
     onClearAll: () -> Unit,
     onEndSession: () -> Unit,
+    onExport: (ExportFormat) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -67,13 +68,6 @@ fun InspectorInfoTab(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (setting.sessionOnly) {
-                        Text(
-                            text = "Session only: never written to disk.",
-                            fontSize = 10.sp,
-                            color = InspectorRed,
-                        )
-                    }
                 }
                 Switch(
                     checked = state.settings[setting] == true,
@@ -104,10 +98,47 @@ fun InspectorInfoTab(
             TextButton(onClick = onClearAll, modifier = Modifier.testTag("inspector_clear_all")) {
                 Text("Clear all buffers", fontSize = 12.sp)
             }
-            TextButton(onClick = onEndSession) {
-                Text("End session (drop raw capture)", fontSize = 12.sp)
+            TextButton(
+                onClick = onEndSession,
+                modifier = Modifier.testTag("inspector_end_session"),
+            ) {
+                Text("Forget captured data", fontSize = 12.sp)
             }
         }
+
+        InspectorSection(
+            title = "Download everything",
+            subtitle = "One tap writes the whole session — every entry in full, the console, the " +
+                "cookies, the settings and the counters — to a file: Downloads/NetworkInspector/ on " +
+                "Android 10+, or a save dialog on older versions. No storage permission is needed.",
+        )
+        Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+            TextButton(
+                onClick = { onExport(ExportFormat.TEXT) },
+                modifier = Modifier.testTag("inspector_export_text"),
+            ) {
+                Text("Save report (.txt)", fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = { onExport(ExportFormat.JSON) },
+                modifier = Modifier.testTag("inspector_export_json"),
+            ) {
+                Text("Save data (.json)", fontSize = 12.sp)
+            }
+        }
+        Text(
+            text = if (state.settings[InspectorSetting.FULL_CAPTURE] == true) {
+                "Reveal sensitive values is on, so the exported file contains real tokens, cookies and " +
+                    "bodies. Treat it as a secret: it is plain text, and anything that can read your " +
+                    "Downloads folder can read it."
+            } else {
+                "Values were masked when they were captured, so the exported file cannot contain them " +
+                    "even on the rows where they exist."
+            },
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
 
         InspectorSection(
             title = "What WebView can and cannot provide",

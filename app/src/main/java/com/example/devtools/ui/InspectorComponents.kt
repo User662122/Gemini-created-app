@@ -213,11 +213,14 @@ fun InspectorHeaderRow(
             )
             when {
                 revealed && field.canReveal -> InspectorBadge("revealed", InspectorRed)
+                field.redaction == RedactionKind.REVEALED -> InspectorBadge("unmasked", InspectorRed)
                 field.redaction == RedactionKind.MASKED -> InspectorBadge("masked", InspectorAmber)
                 field.redaction == RedactionKind.TRUNCATED -> InspectorBadge("truncated", InspectorAmber)
                 field.redaction == RedactionKind.NEVER_STORED -> InspectorBadge("not stored", InspectorRed)
             }
-            if (field.canReveal && !revealed) {
+            // With full capture on there is nothing left to reveal: the value above already *is* the
+            // stored value. The toggle is only offered for rows whose value is still hidden.
+            if (field.canReveal && !revealed && field.redaction == RedactionKind.MASKED) {
                 Text(
                     text = "reveal",
                     fontSize = 11.sp,
@@ -285,6 +288,38 @@ fun InspectorHeaderList(fields: List<HttpField>, emptyText: String) {
 /** Remembers the reveal state of one header while the detail screen is open. */
 @Composable
 private fun rememberRevealed(key: String): MutableState<Boolean> = remember(key) { mutableStateOf(false) }
+
+/**
+ * Permanent, unmissable reminder that the inspector is currently storing secrets in the clear.
+ *
+ * It is deliberately not dismissible: the state it describes is the one that ends up in exported
+ * files, and a developer coming back to the screen after a while should never have to guess which mode
+ * the buffer was captured in.
+ */
+@Composable
+fun FullCaptureBanner(
+    revealSensitiveValues: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!revealSensitiveValues) return
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(InspectorRed.copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("inspector_full_capture_banner"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        InspectorBadge(text = "UNMASKED", color = InspectorRed)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "Reveal sensitive values is on: headers, URLs, cookies and bodies are stored " +
+                "exactly as observed. Debug builds only.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
 
 /** Short size label for a request/response body. */
 fun bodySizeLabel(body: BodyRecord?): String? {

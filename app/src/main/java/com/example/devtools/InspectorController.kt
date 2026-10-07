@@ -38,6 +38,7 @@ class InspectorController(
     private val cookieInspector = CookieInspector(
         cookieManager = { CookieManager.getInstance() },
         store = liveObserver.store,
+        revealSensitiveValues = { settings.policy().revealSensitiveValues },
     )
 
     override val observer: NetworkObserver = liveObserver
@@ -181,8 +182,35 @@ class InspectorController(
         publish(System.currentTimeMillis())
     }
 
+    override fun buildExport(format: ExportFormat): String {
+        val policy = settings.policy()
+        if (!policy.enabled) return ""
+        val now = System.currentTimeMillis()
+        val store = liveObserver.store
+        val snapshot = store.snapshot(now)
+        val dropped = store.droppedCounts()
+        return InspectorExport.render(
+            format = format,
+            exportedAtMillis = now,
+            settings = settingsSnapshot(),
+            snapshot = snapshot,
+            droppedConsoleRows = dropped.second,
+            cookies = _uiState.value.cookies,
+            droppedByRateLimit = liveObserver.droppedByRateLimit(),
+            droppedByPageScript = liveObserver.droppedByPageScript(),
+        )
+    }
+
+    /**
+     * End of a browsing session: the captured buffers are dropped, the switches are not.
+     *
+     * The buffers are memory-only, so leaving them behind would just hold tokens in a process that
+     * nobody is watching. Anything the developer wants to keep should be exported first — that is what
+     * the download action is for.
+     */
     override fun endSession() {
-        settings.endSession()
+        liveObserver.store.clearAll()
+        _uiState.value = _uiState.value.copy(openEntry = null, cookies = emptyList())
         publish(System.currentTimeMillis())
     }
 
@@ -190,7 +218,6 @@ class InspectorController(
         tickerJob?.cancel()
         tickerJob = null
         cookieInspector.close()
-        settings.endSession()
     }
 
     // ------------------------------------------------------------------------------- publishing

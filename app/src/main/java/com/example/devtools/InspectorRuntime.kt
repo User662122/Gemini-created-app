@@ -84,6 +84,13 @@ interface InspectorRuntime {
 
     fun refreshCookies()
 
+    /**
+     * Renders everything the inspector currently holds (entries, console, cookies, settings,
+     * counters) as a file body in the requested format. Empty in release builds.
+     */
+    fun buildExport(format: ExportFormat): String
+
+    /** Drops the captured buffers at the end of a session; the switches themselves persist. */
     fun endSession()
 
     fun close()
@@ -114,6 +121,7 @@ object NullInspectorRuntime : InspectorRuntime {
     override fun openEntry(id: Long) = Unit
     override fun closeEntry() = Unit
     override fun refreshCookies() = Unit
+    override fun buildExport(format: ExportFormat): String = ""
     override fun endSession() = Unit
     override fun close() = Unit
 }

@@ -34,6 +34,8 @@ interface CookieScopeProvider {
 class CookieInspector(
     private val cookieManager: () -> CookieManager?,
     private val store: NetworkLogStore,
+    /** Read once per collect: whether values may be stored in the clear (full capture). */
+    private val revealSensitiveValues: () -> Boolean = { false },
 ) {
 
     /** Installed by the app (the browser ViewModel) so the current page's cookies are always listed. */
@@ -70,7 +72,7 @@ class CookieInspector(
                     host = host,
                     url = url,
                     name = name,
-                    maskedValue = Redaction.maskCookieValue(value),
+                    storedValue = Redaction.cookieValue(value, revealSensitiveValues()),
                     observed = observed,
                 )
             }
@@ -98,9 +100,13 @@ class CookieInspector(
                     id = "app-set:$host:${pair.first}",
                     name = pair.first,
                     value = InspectorValue.known(
-                        Redaction.maskCookieValue(pair.second),
+                        Redaction.cookieValue(pair.second, revealSensitiveValues()),
                         EvidenceSource.APP_HTTP_CLIENT,
-                        InspectorExplanations.COOKIE_MASKED,
+                        if (revealSensitiveValues()) {
+                            "Full capture is on: the value this app passed to CookieManager is stored."
+                        } else {
+                            InspectorExplanations.COOKIE_MASKED
+                        },
                     ),
                     domain = InspectorValue.derived(
                         host,
@@ -141,7 +147,7 @@ class CookieInspector(
         host: String,
         url: String,
         name: String,
-        maskedValue: String,
+        storedValue: String,
         observed: CookieRecord?,
     ): CookieRecord {
         fun <T> unreadable(field: String): InspectorValue<T> = InspectorValue.unknown(
@@ -152,7 +158,15 @@ class CookieInspector(
         return CookieRecord(
             id = id,
             name = name,
-            value = InspectorValue.known(maskedValue, EvidenceSource.COOKIE_MANAGER, InspectorExplanations.COOKIE_MASKED),
+            value = InspectorValue.known(
+                storedValue,
+                EvidenceSource.COOKIE_MANAGER,
+                if (revealSensitiveValues()) {
+                    "Full capture is on: the value CookieManager would send for this host is stored."
+                } else {
+                    InspectorExplanations.COOKIE_MASKED
+                },
+            ),
             domain = observed?.domain?.takeIf { it.isKnown } ?: unreadable("Domain"),
             path = observed?.path?.takeIf { it.isKnown } ?: unreadable("Path"),
             secure = observed?.secure?.takeIf { it.isKnown } ?: unreadable("Secure flag"),

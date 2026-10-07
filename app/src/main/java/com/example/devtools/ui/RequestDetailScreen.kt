@@ -54,7 +54,8 @@ import com.example.devtools.ui.theme.InspectorAmber
 @Composable
 fun RequestDetailScreen(
     entry: NetworkEntry,
-    rawCapture: Boolean,
+    /** True while "Reveal sensitive values" is on, so the screen can explain what it is showing. */
+    revealSensitiveValues: Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -100,7 +101,7 @@ fun RequestDetailScreen(
                     }
                 }
                 IconButton(
-                    onClick = { copyToClipboard(context, InspectorReport.entryReport(entry, rawCapture)) },
+                    onClick = { copyToClipboard(context, InspectorReport.entryReport(entry, revealSensitiveValues)) },
                     modifier = Modifier.testTag("inspector_detail_copy"),
                 ) {
                     Icon(
@@ -110,7 +111,7 @@ fun RequestDetailScreen(
                     )
                 }
                 IconButton(
-                    onClick = { shareText(context, InspectorReport.entryReport(entry, rawCapture)) },
+                    onClick = { shareText(context, InspectorReport.entryReport(entry, revealSensitiveValues)) },
                     modifier = Modifier.testTag("inspector_detail_share"),
                 ) {
                     Icon(
@@ -213,12 +214,15 @@ fun RequestDetailScreen(
                         "WebView reported an empty header set for this request."
                     },
                 )
+                if (revealSensitiveValues && entry.request.headers.any { it.isRedacted }) {
+                    MaskedWhileOffNote()
+                }
 
                 InspectorSection("Request body")
                 BodySection(
                     body = entry.request.body,
                     unavailableReason = InspectorExplanations.REQUEST_BODY_UNAVAILABLE,
-                    rawCapture = rawCapture,
+                    revealSensitiveValues = revealSensitiveValues,
                 )
 
                 InspectorSection("Response")
@@ -283,12 +287,15 @@ fun RequestDetailScreen(
                         fields = response.headers,
                         emptyText = "No response headers were reported for this message.",
                     )
+                    if (revealSensitiveValues && response.headers.any { it.isRedacted }) {
+                        MaskedWhileOffNote()
+                    }
 
                     InspectorSection("Response body preview")
                     BodySection(
                         body = response.body,
                         unavailableReason = InspectorExplanations.RESPONSE_BODY_UNAVAILABLE,
-                        rawCapture = rawCapture,
+                        revealSensitiveValues = revealSensitiveValues,
                     )
                 }
 
@@ -312,7 +319,11 @@ fun RequestDetailScreen(
 }
 
 @Composable
-private fun BodySection(body: BodyRecord?, unavailableReason: String, rawCapture: Boolean) {
+private fun BodySection(
+    body: BodyRecord?,
+    unavailableReason: String,
+    revealSensitiveValues: Boolean,
+) {
     if (body == null) {
         Text(
             text = unavailableReason,
@@ -338,7 +349,7 @@ private fun BodySection(body: BodyRecord?, unavailableReason: String, rawCapture
             InspectorBadge(text = body.kind.name.lowercase(), color = MaterialTheme.colorScheme.primary)
             InspectorBadge(text = value.source.label, color = MaterialTheme.colorScheme.primary)
             if (body.truncated) InspectorBadge(text = "truncated", color = InspectorAmber)
-            if (!rawCapture) InspectorBadge(text = "scrubbed", color = InspectorAmber)
+            if (!revealSensitiveValues) InspectorBadge(text = "scrubbed", color = InspectorAmber)
         }
         Text(
             text = preview,
@@ -349,16 +360,31 @@ private fun BodySection(body: BodyRecord?, unavailableReason: String, rawCapture
                 .fillMaxWidth()
                 .padding(top = 6.dp),
         )
-        if (!rawCapture) {
+        if (!revealSensitiveValues) {
             Text(
                 text = "Secrets that matched the redaction policy were replaced before this text was " +
-                    "stored. Enable raw capture to see bodies unscrubbed for this session.",
+                    "stored, so the file the page actually sent is not recoverable from this row. Turn " +
+                    "on \"Reveal sensitive values\" and reload the page to capture bodies verbatim.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
+}
+
+/**
+ * Shown when a row contains masked values although "Reveal sensitive values" is on *now*: the masking
+ * was decided when the row was captured, and re-reading it would need the request to happen again.
+ */
+@Composable
+private fun MaskedWhileOffNote() {
+    Text(
+        text = InspectorExplanations.FULL_CAPTURE_OFF_NOTE,
+        fontSize = 11.sp,
+        color = InspectorAmber,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
 }
 
 private fun flagValue(value: Boolean?, unknownReason: String): InspectorValue<Boolean> =

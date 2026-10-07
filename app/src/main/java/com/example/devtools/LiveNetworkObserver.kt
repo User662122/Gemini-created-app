@@ -321,8 +321,14 @@ class LiveNetworkObserver(
             return
         }
 
-        val scrubbed = Redaction.scrubText(message, InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS)
-        val scrubbedStack = stackTrace?.let { Redaction.scrubText(it, InspectorLimits.MAX_STACK_TRACE_CHARS) }
+        val scrubbed = Redaction.scrubText(
+            message,
+            InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS,
+            policy.revealSensitiveValues,
+        )
+        val scrubbedStack = stackTrace?.let {
+            Redaction.scrubText(it, InspectorLimits.MAX_STACK_TRACE_CHARS, policy.revealSensitiveValues)
+        }
         store.addConsole(
             ConsoleEntry(
                 id = store.allocateConsoleId(),
@@ -553,9 +559,13 @@ class LiveNetworkObserver(
                 id = "set-cookie:$domain:${parsed.name}",
                 name = parsed.name,
                 value = InspectorValue.known(
-                    Redaction.maskCookieValue(parsed.value),
+                    Redaction.cookieValue(parsed.value, policy.revealSensitiveValues),
                     EvidenceSource.SET_COOKIE_HEADER,
-                    InspectorExplanations.COOKIE_MASKED,
+                    if (policy.revealSensitiveValues) {
+                        "Full capture is on: the cookie value is stored exactly as the server sent it."
+                    } else {
+                        InspectorExplanations.COOKIE_MASKED
+                    },
                 ),
                 domain = InspectorValue.known(
                     domain,
@@ -590,7 +600,7 @@ class LiveNetworkObserver(
                     EvidenceSource.SET_COOKIE_HEADER,
                     "Value exactly as declared by the server; the inspector does not reinterpret dates.",
                 ),
-                observedForUrl = Redaction.displayUrl(url, maskSensitiveParams = !policy.rawCapture),
+                observedForUrl = Redaction.displayUrl(url, maskSensitiveParams = !policy.revealSensitiveValues),
                 sources = setOf(EvidenceSource.SET_COOKIE_HEADER),
                 notes = notes,
             )
@@ -788,8 +798,14 @@ class LiveNetworkObserver(
     private fun handlePageConsoleError(tabId: String, record: PageJsRecord, policy: CapturePolicy) {
         if (!policy.captureConsole) return
         val message = record.errorText ?: record.url.ifBlank { "Uncaught error" }
-        val scrubbed = Redaction.scrubText(message, InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS)
-        val stack = record.stackTrace?.let { Redaction.scrubText(it, InspectorLimits.MAX_STACK_TRACE_CHARS) }
+        val scrubbed = Redaction.scrubText(
+            message,
+            InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS,
+            policy.revealSensitiveValues,
+        )
+        val stack = record.stackTrace?.let {
+            Redaction.scrubText(it, InspectorLimits.MAX_STACK_TRACE_CHARS, policy.revealSensitiveValues)
+        }
         val now = System.currentTimeMillis()
 
         // WebView usually reports the same uncaught error through onConsoleMessage; attach the stack to
@@ -950,7 +966,7 @@ class LiveNetworkObserver(
                 entry.copy(
                     response = base.copy(
                         errorDescription = InspectorValue.known(
-                            Redaction.scrubText(failureText, 500).text,
+                            Redaction.scrubText(failureText, 500, policy.revealSensitiveValues).text,
                             EvidenceSource.PAGE_JAVASCRIPT,
                         ),
                         receivedAtMillis = InspectorValue.known(
@@ -961,7 +977,12 @@ class LiveNetworkObserver(
                     state = EntryState.FAILED,
                     notes = appendNote(
                         entry.notes,
-                        record.stackTrace?.let { "Stack (from window.onerror): ${Redaction.scrubText(it, 600).text}" },
+                        record.stackTrace?.let { stack ->
+                            val text = Redaction
+                                .scrubText(stack, 600, policy.revealSensitiveValues)
+                                .text
+                            "Stack (from window.onerror): $text"
+                        },
                     ),
                 )
             }
@@ -997,7 +1018,7 @@ class LiveNetworkObserver(
             entry.copy(
                 response = emptyResponse(entry.request.startedAtMillis).copy(
                     errorDescription = InspectorValue.known(
-                        Redaction.scrubText(failureText, 500).text,
+                        Redaction.scrubText(failureText, 500, policy.revealSensitiveValues).text,
                         EvidenceSource.PAGE_JAVASCRIPT,
                     ),
                 ),
@@ -1029,7 +1050,11 @@ class LiveNetworkObserver(
                 truncated = record.bodyTruncated,
             )
         }
-        val scrubbed = Redaction.scrubText(preview, InspectorLimits.MAX_BODY_PREVIEW_CHARS)
+        val scrubbed = Redaction.scrubText(
+            preview,
+            InspectorLimits.MAX_BODY_PREVIEW_CHARS,
+            policy.revealSensitiveValues,
+        )
         return BodyRecord(
             preview = InspectorValue.known(scrubbed.text, EvidenceSource.PAGE_JAVASCRIPT),
             kind = record.bodyKind,
@@ -1047,7 +1072,11 @@ class LiveNetworkObserver(
         }
         val responseBodyKind = bodyKindFromContentType(record.contentType)
         val responseBody = if (record.responseBodyPreview != null && policy.captureResponseBodies) {
-            val scrubbed = Redaction.scrubText(record.responseBodyPreview, InspectorLimits.MAX_BODY_PREVIEW_CHARS)
+            val scrubbed = Redaction.scrubText(
+                record.responseBodyPreview,
+                InspectorLimits.MAX_BODY_PREVIEW_CHARS,
+                policy.revealSensitiveValues,
+            )
             BodyRecord(
                 preview = InspectorValue.known(scrubbed.text, EvidenceSource.PAGE_JAVASCRIPT),
                 kind = responseBodyKind,
@@ -1121,7 +1150,7 @@ class LiveNetworkObserver(
                 Redaction.headerField(
                     name = name,
                     value = value,
-                    captureRawValues = policy.rawCapture,
+                    revealSensitiveValues = policy.revealSensitiveValues,
                     extraNote = "Reported by the page's fetch()/XMLHttpRequest call; the browser can add " +
                         "or change headers after that point.",
                 )
@@ -1132,7 +1161,7 @@ class LiveNetworkObserver(
     // ------------------------------------------------------------------------------------ utilities
 
     private fun displayUrl(url: String, policy: CapturePolicy): String =
-        Redaction.displayUrl(url, maskSensitiveParams = !policy.rawCapture)
+        Redaction.displayUrl(url, maskSensitiveParams = !policy.revealSensitiveValues)
 
     private fun keyFor(url: String, method: String, policy: CapturePolicy): String =
         UrlParts.correlationKey(displayUrl(url, policy), method)
@@ -1146,7 +1175,7 @@ class LiveNetworkObserver(
                 dropped++
                 continue
             }
-            fields.add(Redaction.headerField(name, value, policy.rawCapture))
+            fields.add(Redaction.headerField(name, value, policy.revealSensitiveValues))
         }
         val sorted = fields.sortedBy { it.name.lowercase() }
         if (dropped == 0) return sorted

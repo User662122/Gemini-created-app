@@ -15,8 +15,6 @@ enum class InspectorSetting(
     val title: String,
     val description: String,
     val defaultValue: Boolean,
-    /** Session-only switches are never written to disk. */
-    val sessionOnly: Boolean = false,
     val requiresReinjection: Boolean = false,
 ) {
     ENABLED(
@@ -26,20 +24,22 @@ enum class InspectorSetting(
             "browser. Available only in debug builds.",
         defaultValue = true,
     ),
-    RAW_CAPTURE(
-        key = "raw_capture",
-        title = "Raw capture (reveal masked values)",
-        description = InspectorExplanations.RAW_CAPTURE_WARNING,
-        defaultValue = false,
-        sessionOnly = true,
+    FULL_CAPTURE(
+        key = "full_capture",
+        title = "Reveal sensitive values",
+        description = "Store and show everything exactly as observed: Authorization and Cookie " +
+            "headers, tokens in URLs, cookie values, request/response bodies and console text are no " +
+            "longer masked or scrubbed. On by default in debug builds, and the reason this tool is " +
+            "debug-only. Rows captured while this was off keep the values they were stored with.",
+        defaultValue = true,
     ),
     REQUEST_BODIES(
         key = "request_bodies",
         title = "Capture request bodies",
         description = "Store previews of the bodies the page passed to fetch(), XMLHttpRequest and " +
-            "sendBeacon, after scrubbing obvious secrets. Off by default because POST bodies often " +
-            "contain personal data.",
-        defaultValue = false,
+            "sendBeacon. With \"Reveal sensitive values\" on they are stored verbatim, so this is the " +
+            "setting to switch off if a body may contain personal data you do not want on screen.",
+        defaultValue = true,
         requiresReinjection = true,
     ),
     RESPONSE_BODIES(
@@ -47,7 +47,7 @@ enum class InspectorSetting(
         title = "Capture response body previews",
         description = "Store a size-capped preview of text responses the page read through fetch() or " +
             "XMLHttpRequest. Bodies of resources the app does not fetch itself stay unavailable.",
-        defaultValue = false,
+        defaultValue = true,
         requiresReinjection = true,
     ),
     CONSOLE(
@@ -60,9 +60,9 @@ enum class InspectorSetting(
     CONSOLE_VERBOSE(
         key = "console_verbose",
         title = "Include verbose console output",
-        description = "Also record console.debug and console.info, which many libraries emit " +
-            "constantly.",
-        defaultValue = false,
+        description = "Also record console.debug and console.info. On by default so nothing is " +
+            "missing; switch it off when a chatty library fills the buffer.",
+        defaultValue = true,
         requiresReinjection = true,
     ),
 }
@@ -86,10 +86,6 @@ class InspectorSettingsStore(
     private val currentPolicy = AtomicReference(if (available) readPolicy() else CapturePolicy.DISABLED)
     private val currentVersion = AtomicInteger(0)
 
-    /** Raw capture is deliberately never persisted: it dies with the process. */
-    @Volatile
-    private var rawCaptureInSession: Boolean = false
-
     /** The policy the WebView side reads. Cheap enough for a hot path. */
     fun policy(): CapturePolicy = currentPolicy.get()
 
@@ -98,23 +94,12 @@ class InspectorSettingsStore(
 
     fun isAvailable(): Boolean = available
 
-    fun get(setting: InspectorSetting): Boolean {
-        if (!available) return false
-        if (setting == InspectorSetting.RAW_CAPTURE) return rawCaptureInSession
-        return preferences.getBoolean(setting.key, setting.defaultValue)
-    }
+    fun get(setting: InspectorSetting): Boolean =
+        available && preferences.getBoolean(setting.key, setting.defaultValue)
 
     fun set(setting: InspectorSetting, value: Boolean) {
         if (!available) return
-        when {
-            setting.sessionOnly -> rawCaptureInSession = value
-            setting == InspectorSetting.ENABLED -> {
-                preferences.edit().putBoolean(setting.key, value).apply()
-                // Switching the inspector off also drops raw capture, as the warning promises.
-                if (!value) rawCaptureInSession = false
-            }
-            else -> preferences.edit().putBoolean(setting.key, value).apply()
-        }
+        preferences.edit().putBoolean(setting.key, value).apply()
         publish()
     }
 
@@ -124,18 +109,10 @@ class InspectorSettingsStore(
         captureResponseBodies = policy().captureResponseBodies,
     )
 
-    /** Forgets raw capture at the end of a session. */
-    fun endSession() {
-        if (!rawCaptureInSession) return
-        rawCaptureInSession = false
-        publish()
-    }
-
     /** Restores every switch to its default, including the persisted ones. */
     fun resetToDefaults() {
         if (!available) return
         preferences.edit().clear().apply()
-        rawCaptureInSession = false
         publish()
     }
 
@@ -143,7 +120,10 @@ class InspectorSettingsStore(
         if (!available) return CapturePolicy.DISABLED
         return CapturePolicy(
             enabled = preferences.getBoolean(InspectorSetting.ENABLED.key, InspectorSetting.ENABLED.defaultValue),
-            rawCapture = rawCaptureInSession,
+            revealSensitiveValues = preferences.getBoolean(
+                InspectorSetting.FULL_CAPTURE.key,
+                InspectorSetting.FULL_CAPTURE.defaultValue,
+            ),
             captureRequestBodies = preferences.getBoolean(
                 InspectorSetting.REQUEST_BODIES.key,
                 InspectorSetting.REQUEST_BODIES.defaultValue,

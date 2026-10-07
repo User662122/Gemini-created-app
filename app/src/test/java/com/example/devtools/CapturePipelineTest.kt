@@ -23,7 +23,7 @@ class CapturePipelineTest {
 
     private val fullPolicy = CapturePolicy(
         enabled = true,
-        rawCapture = true,
+        revealSensitiveValues = true,
         captureRequestBodies = true,
         captureResponseBodies = true,
         captureConsole = true,
@@ -108,8 +108,8 @@ class CapturePipelineTest {
     }
 
     @Test
-    fun `safe mode masks a token in the stored URL`() {
-        val observer = newObserver(fullPolicy.copy(rawCapture = false))
+    fun `with full capture off, a token in the URL is masked before it is stored`() {
+        val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
 
         observer.onRequestStarted(
             requestObservation("https://example.com/api?access_token=supersecret&page=2")
@@ -122,8 +122,8 @@ class CapturePipelineTest {
     }
 
     @Test
-    fun `sensitive request headers are masked at capture time`() {
-        val observer = newObserver(fullPolicy.copy(rawCapture = false))
+    fun `with full capture off, sensitive request headers are masked at capture time`() {
+        val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
 
         observer.onRequestStarted(
             requestObservation(
@@ -351,6 +351,97 @@ class CapturePipelineTest {
     }
 
     @Test
+    fun `with full capture on, an Authorization header is stored exactly as sent`() {
+        val observer = newObserver()
+
+        observer.onRequestStarted(
+            requestObservation(
+                url = "https://example.com/api",
+                headers = mapOf("Authorization" to "Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz"),
+            )
+        )
+
+        val auth = entries(observer)[0].request.headers.single { it.name == "Authorization" }
+        assertEquals("Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz", auth.display)
+        assertTrue(auth.isRevealedSensitive)
+        assertFalse("an unmasked secret is not a redaction", auth.isRedacted)
+        assertEquals("Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz", auth.raw)
+    }
+
+    @Test
+    fun `with full capture on, a token in the URL survives`() {
+        val observer = newObserver()
+
+        observer.onRequestStarted(
+            requestObservation("https://example.com/api?access_token=supersecret&page=2")
+        )
+
+        val url = entries(observer)[0].url
+        assertTrue(url.contains("access_token=supersecret"))
+        assertTrue(url.contains("page=2"))
+        assertFalse(url.contains(Redaction.MASK))
+    }
+
+    @Test
+    fun `with full capture on, console text is stored verbatim`() {
+        val observer = newObserver()
+
+        observer.onConsoleMessage("tab", ConsoleLevel.LOG, "token=abcdef123456", "app.js", 12, null)
+
+        val line = observer.store.snapshot(0L).console.single()
+        assertEquals("token=abcdef123456", line.message)
+        assertFalse(line.masked)
+    }
+
+    @Test
+    fun `with full capture on, a Set-Cookie value is stored as sent`() {
+        val observer = newObserver()
+
+        observer.onRequestStarted(requestObservation("https://shop.example.com/checkout"))
+        observer.onResponseReceived(
+            responseObservation(
+                url = "https://shop.example.com/checkout",
+                headers = mapOf("Set-Cookie" to "sid=abc123def456; Path=/; Secure; HttpOnly"),
+                contentType = "text/html",
+            )
+        )
+
+        val cookie = observer.store.cookieObservations().single()
+        assertEquals("abc123def456", cookie.value.value)
+    }
+
+    @Test
+    fun `with full capture off, the same Set-Cookie row keeps only the length`() {
+        val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
+
+        observer.onResponseReceived(
+            responseObservation(
+                url = "https://shop.example.com/checkout",
+                headers = mapOf("Set-Cookie" to "sid=abc123def456; Path=/; Secure; HttpOnly"),
+                contentType = "text/html",
+            )
+        )
+
+        val cookie = observer.store.cookieObservations().single()
+        assertFalse(cookie.value.value!!.contains("abc123def456"))
+        assertTrue(cookie.value.value!!.contains("chars"))
+    }
+
+    @Test
+    fun `with full capture on, a request body preview is stored verbatim`() {
+        val observer = newObserver()
+
+        observer.onPageRecords(
+            "tab",
+            """{"doc":"doc-1","r":[{"k":"req","id":1,"url":"https://example.com/api/login","m":"POST",""" +
+                """"t":1759800000000,"h":{},"b":"{\"password\":\"hunter2\"}","bk":"json","bl":22,"i":"fetch"}]}"""
+        )
+
+        val body = entries(observer)[0].request.body!!
+        assertEquals("{\"password\":\"hunter2\"}", body.preview.value)
+    }
+
+    @Test
     fun `a Set-Cookie header yields a cookie row with real attributes`() {
         val observer = newObserver()
 
@@ -450,8 +541,8 @@ class CapturePipelineTest {
     }
 
     @Test
-    fun `the report never leaks a secret that safe mode masked`() {
-        val observer = newObserver(fullPolicy.copy(rawCapture = false))
+    fun `the report never leaks a secret that masking mode removed`() {
+        val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
         observer.onRequestStarted(
             requestObservation(
                 url = "https://example.com/api?access_token=supersecret",
@@ -459,7 +550,7 @@ class CapturePipelineTest {
             )
         )
 
-        val report = InspectorReport.entryReport(entries(observer)[0], rawCapture = false)
+        val report = InspectorReport.entryReport(entries(observer)[0], revealSensitiveValues = false)
 
         assertFalse(report.contains("supersecret"))
         assertFalse(report.contains("abcdefghijklmnop"))

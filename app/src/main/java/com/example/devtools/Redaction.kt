@@ -1,23 +1,26 @@
 package com.example.devtools
 
 /**
- * The single place where the inspector decides that something is too sensitive to show.
+ * The single place where the inspector decides whether something is sensitive, and whether to hide it.
  *
- * Rules, in the spirit of Android's `android.util.Log` guidance ("never log credentials"):
+ * There are two modes, and the difference is a single switch (`FULL_CAPTURE`):
  *
- *  * Masking happens **at capture time**, on the background thread, before anything is stored. A
- *    masked value therefore never sits in the inspector's buffer, never reaches the UI, and never
- *    appears in an exported report.
- *  * Header values whose *name* looks sensitive (see [isSensitiveHeaderName]) are masked. Their raw
- *    value is kept only while raw capture is on, which is what powers the per-field "Reveal" action.
- *  * Cookie values are masked with [maskCookieValue] — the value is never stored in either mode,
- *    because the Cookie Inspector needs only name/domain/path/flags/expiry.
- *  * Request bodies are off unless the user enables them, and are scrubbed with [scrubText] before
- *    they are stored.
- *  * Console messages are always scrubbed, in both modes, because page code routinely logs tokens.
+ *  * **Full capture on (default in debug builds)** — nothing is hidden. Header values, query
+ *    parameters, cookie values, body previews and console text are stored exactly as observed, and
+ *    values that *would* have been masked are tagged [RedactionKind.REVEALED] so the UI can mark them
+ *    as visible secrets. This is what makes the inspector behave like a desktop DevTools panel.
+ *  * **Full capture off** — masking happens **at capture time**, on the background thread, before
+ *    anything is stored: a masked value never sits in the buffer, never reaches the UI and never
+ *    appears in an export. Sensitive headers and parameters are replaced with [MASK], cookie values
+ *    are replaced by a `<n> chars` summary, and [scrubText] removes credentials from free text.
  *
- * Masking is intentionally conservative: over-masking costs a little convenience in a debug tool,
- * under-masking can leak a live session token into a screenshot or a bug report.
+ * Both modes are debug-build-only: release builds never enable any capture at all (see
+ * [DevToolsGate]). [isSensitiveHeaderName] / [isSensitiveParamName] stay in use in both modes, because
+ * even with full capture on it is worth labelling which fields are secrets.
+ *
+ * When in doubt about a *header or parameter name*, the inspector treats it as sensitive: refusing to
+ * hide something is a smaller mistake than hiding the token someone opened the tool to read, and the
+ * switch is one tap away in either direction.
  */
 object Redaction {
 
@@ -91,13 +94,14 @@ object Redaction {
     /**
      * Turns one header into a storable [HttpField].
      *
-     * @param captureRawValues when true (raw capture enabled) the original value is also stored, so
-     *        the detail screen can reveal this single field. When false the value is unrecoverable.
+     * @param revealSensitiveValues when true (full capture) the value is stored exactly as observed
+     *        and merely flagged [RedactionKind.REVEALED] if it counts as sensitive. When false a
+     *        sensitive value is replaced before it is stored, so it is unrecoverable afterwards.
      */
     fun headerField(
         name: String,
         value: String,
-        captureRawValues: Boolean,
+        revealSensitiveValues: Boolean,
         extraNote: String? = null,
     ): HttpField {
         val truncated = truncate(value, InspectorLimits.MAX_HEADER_VALUE_CHARS)
@@ -110,11 +114,23 @@ object Redaction {
         }
 
         if (isSensitiveHeaderName(name)) {
-            notes += "Name matches the sensitive-field policy, so the value is masked."
+            if (revealSensitiveValues) {
+                notes += "Full capture is on: this value normally counts as sensitive and is stored " +
+                    "and shown exactly as observed."
+                return HttpField(
+                    name = name,
+                    display = truncated,
+                    raw = truncated,
+                    redaction = if (wasTruncated) RedactionKind.TRUNCATED else RedactionKind.REVEALED,
+                    note = notes.joinToString(" "),
+                )
+            }
+            notes += "Name matches the sensitive-field policy, so the value is masked and the " +
+                "original was not stored."
             return HttpField(
                 name = name,
                 display = "$MASK (${value.length} chars)",
-                raw = if (captureRawValues) truncated else null,
+                raw = null,
                 redaction = RedactionKind.MASKED,
                 note = notes.joinToString(" "),
             )
@@ -130,9 +146,20 @@ object Redaction {
     }
 
     /**
-     * Masks a cookie value. Cookie values are **never** stored: the Cookie Inspector only needs the
-     * name, scope, flags and expiry, and `CookieManager` remains the source of truth if the app ever
-     * needs the real value.
+     * A cookie value, ready to be stored.
+     *
+     * With full capture on the real value is kept, because "which cookie did the server set?" is
+     * exactly the question the Cookie Inspector exists to answer. Otherwise only a length summary is
+     * stored — never the value.
+     */
+    fun cookieValue(value: String?, revealSensitiveValues: Boolean): String {
+        if (value.isNullOrEmpty()) return ""
+        return if (revealSensitiveValues) value else maskCookieValue(value)
+    }
+
+    /**
+     * Masks a cookie value, keeping only its length. Used when full capture is off; with full capture
+     * on [cookieValue] stores the value itself.
      */
     fun maskCookieValue(value: String?): String =
         if (value.isNullOrEmpty()) "" else "$MASK (${value.length} chars)"
@@ -188,12 +215,22 @@ object Redaction {
     }
 
     /**
-     * Scrubs secrets out of free text (console messages and request-body previews).
+     * Scrubs secrets out of free text (console messages, error text and body previews).
      *
-     * @return the scrubbed text plus whether anything was replaced, so the UI can show a
-     *         "masked by policy" badge instead of silently altering what the page logged.
+     * With full capture on the text is returned unchanged (only size-capped), so the console and the
+     * bodies read exactly like the page wrote them.
+     *
+     * @return the text plus whether anything was replaced, so the UI can show a "scrubbed" badge
+     *         instead of silently altering what the page logged.
      */
-    fun scrubText(text: String, maxChars: Int = Int.MAX_VALUE): ScrubResult {
+    fun scrubText(
+        text: String,
+        maxChars: Int = Int.MAX_VALUE,
+        revealSensitiveValues: Boolean = false,
+    ): ScrubResult {
+        if (revealSensitiveValues) {
+            return ScrubResult(text = truncate(text, maxChars), masked = false)
+        }
         var result = truncate(text, maxChars)
         var didMask = result.length != text.length
 

@@ -87,11 +87,18 @@ enum class RedactionKind {
     /** Shown exactly as observed. */
     NONE,
 
-    /** Masked because the name looks sensitive. [HttpField.raw] holds the value only in raw mode. */
+    /** Masked because the name looks sensitive; the original value was not stored. */
     MASKED,
 
-    /** Masked always: this value is never stored or revealed, even in raw mode. */
+    /** Masked always: this value is never stored or revealed. */
     NEVER_STORED,
+
+    /**
+     * A value the inspector would normally mask, stored and shown in the clear because **full
+     * capture** is on. Flagged rather than silently treated as ordinary, so the UI can mark it as a
+     * secret that is currently visible (and about to be written into an export).
+     */
+    REVEALED,
 
     /** Value was cut down to the inspector's size budget. */
     TRUNCATED,
@@ -100,8 +107,8 @@ enum class RedactionKind {
 /**
  * One HTTP header as stored by the inspector.
  *
- * [display] is always safe to render. [raw] is non-null only while raw capture is enabled (debug
- * builds, explicit opt-in), which is what enables the per-field "Reveal" action.
+ * [display] is what the UI and the reports print, and it is the real value whenever full capture is
+ * on. [raw] is non-null in that mode too, so the per-field "Reveal" action stays available.
  */
 data class HttpField(
     val name: String,
@@ -110,7 +117,14 @@ data class HttpField(
     val redaction: RedactionKind = RedactionKind.NONE,
     val note: String? = null,
 ) {
-    val isRedacted: Boolean get() = redaction != RedactionKind.NONE
+    /** True when something was hidden or cut, so the row can be flagged as "not the full value". */
+    val isRedacted: Boolean get() =
+        redaction == RedactionKind.MASKED ||
+            redaction == RedactionKind.NEVER_STORED ||
+            redaction == RedactionKind.TRUNCATED
+
+    /** True when this is a normally-sensitive value that full capture is showing in the clear. */
+    val isRevealedSensitive: Boolean get() = redaction == RedactionKind.REVEALED
 
     val canReveal: Boolean get() = raw != null
 }

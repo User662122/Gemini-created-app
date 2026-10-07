@@ -125,13 +125,18 @@ object InspectorExplanations {
             "and it is not counted as a failure."
 
     const val MASKED_BY_POLICY =
-        "Masked by the inspector's redaction policy at capture time. Enable raw capture in Network " +
-            "Inspector settings to reveal individual fields for the current session."
+        "Masked by the inspector's redaction policy at capture time, so the original value was never " +
+            "stored. Turn on \"Reveal sensitive values\" and capture the request again to see it."
 
-    const val RAW_CAPTURE_WARNING =
-        "Raw capture stores unmasked header values, request bodies and console text for the current " +
-            "session, so they can be revealed on screen. It never writes them to disk and never sends " +
-            "them anywhere; it is cleared when the inspector is switched off or the app is closed."
+    const val FULL_CAPTURE_WARNING =
+        "Reveal sensitive values is ON. Authorization and Cookie headers, tokens in URLs, cookie " +
+            "values, bodies and console text are stored exactly as observed, and any file you export " +
+            "contains them in the clear. This is a debug-build-only tool: switch the switch off to go " +
+            "back to masking at capture time."
+
+    const val FULL_CAPTURE_OFF_NOTE =
+        "This row was stored while \"Reveal sensitive values\" was off, so the original value is not " +
+            "in the buffer. Turn the switch on and reload the page to capture it in the clear."
 
     /**
      * The short, user-facing capability summary shown at the top of the inspector and in the report.
@@ -140,7 +145,7 @@ object InspectorExplanations {
         "Request URL and method, with timestamps" to true,
         "Request headers, as the subset WebView exposes" to true,
         "Request bodies passed to fetch/XHR/sendBeacon by the page" to true,
-        "Request-body capture is off by default (privacy)" to true,
+        "Sensitive values unmasked while \"Reveal sensitive values\" is on" to true,
         "HTTP status for 4xx/5xx and for responses the app intercepts" to true,
         "Response headers and Content-Type for responses the app intercepts" to true,
         "Cookie scope (domain/path/flags/expiry) for cookies the app can see" to true,

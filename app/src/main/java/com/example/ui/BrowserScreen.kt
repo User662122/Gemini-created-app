@@ -336,6 +336,7 @@ fun BrowserScreen(
                     onRefreshCookies = { inspector.refreshCookies() },
                     onSettingChange = { setting, value -> inspector.setSetting(setting, value) },
                     onEndSession = { inspector.endSession() },
+                    onBuildExport = { format -> inspector.buildExport(format) },
                 )
             }
 

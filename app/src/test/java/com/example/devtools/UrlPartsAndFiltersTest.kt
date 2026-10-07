@@ -263,7 +263,7 @@ class InspectorFiltersTest {
     fun `masked filter finds entries the inspector had to redact`() {
         val masked = entry(
             headers = listOf(
-                Redaction.headerField("Authorization", "Bearer abcdefghijklmnop", captureRawValues = false)
+                Redaction.headerField("Authorization", "Bearer abcdefghijklmnop", revealSensitiveValues = false)
             )
         )
         assertTrue(InspectorFilters.matches(masked, InspectorFilterState(onlyWithRedactions = true)))

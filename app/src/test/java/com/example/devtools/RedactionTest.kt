@@ -17,7 +17,7 @@ class RedactionTest {
         val field = Redaction.headerField(
             name = "Authorization",
             value = "Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz",
-            captureRawValues = false,
+            revealSensitiveValues = false,
         )
 
         assertTrue(field.isRedacted)
@@ -31,7 +31,7 @@ class RedactionTest {
         val field = Redaction.headerField(
             name = "X-Company-Auth-Token",
             value = "s3cr3t-value",
-            captureRawValues = true,
+            revealSensitiveValues = true,
         )
 
         assertTrue(field.isRedacted)
@@ -40,8 +40,39 @@ class RedactionTest {
     }
 
     @Test
+    fun `with full capture on, the header value itself is stored`() {
+        val field = Redaction.headerField(
+            name = "Authorization",
+            value = "Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz",
+            revealSensitiveValues = true,
+        )
+
+        assertEquals("Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz", field.display)
+        assertEquals("Bearer eyJhbGciOiJIUzI1NiJ9.abcdefghij.zzzzzzzzzz", field.raw)
+        // Flagged as a secret being shown, but not as something that was hidden.
+        assertTrue(field.isRevealedSensitive)
+        assertFalse(field.isRedacted)
+    }
+
+    @Test
+    fun `with full capture on, scrubbing leaves text alone`() {
+        val text = "auth=Bearer abc1234567890 password=hunter2"
+
+        val result = Redaction.scrubText(text, revealSensitiveValues = true)
+
+        assertEquals(text, result.text)
+        assertFalse(result.masked)
+    }
+
+    @Test
+    fun `cookie values are kept only when full capture is on`() {
+        assertEquals("abcdef123456", Redaction.cookieValue("abcdef123456", revealSensitiveValues = true))
+        assertFalse(Redaction.cookieValue("abcdef123456", revealSensitiveValues = false).contains("abcdef123456"))
+    }
+
+    @Test
     fun `ordinary headers are stored unmasked`() {
-        val field = Redaction.headerField("Content-Type", "application/json", captureRawValues = false)
+        val field = Redaction.headerField("Content-Type", "application/json", revealSensitiveValues = false)
 
         assertEquals(RedactionKind.NONE, field.redaction)
         assertEquals("application/json", field.display)
