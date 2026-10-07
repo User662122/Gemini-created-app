@@ -11,6 +11,9 @@ on:
 
 permissions:
   contents: read
+  # Used only on failure: a check run carrying the first compiler errors, so a
+  # failed build is diagnosable from the API/PR without downloading the job log.
+  checks: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -56,13 +59,16 @@ jobs:
           set -o pipefail
           gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee app/build/ci-build.log
 
-      - name: Annotate build failure details
+      - name: Publish build failure diagnostics
         if: failure() && steps.build.outcome == 'failure'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_LOG: app/build/ci-build.log
         run: |
           python3 - <<'PY'
+          import json
           import os
+          import subprocess
           from pathlib import Path
 
           log = Path(os.environ["BUILD_LOG"])
@@ -72,12 +78,34 @@ jobs:
               if line.startswith("e: ") or "error:" in line.lower() or line.startswith("FAILURE:")
           ]
           if interesting:
-              start = max(0, min(interesting) - 5)
-              details = chr(10).join(lines[start:start + 60])
+              start = max(0, min(interesting) - 3)
+              excerpt = chr(10).join(lines[start:start + 120])
           else:
-              details = chr(10).join(lines[-80:])
-          escaped = details[:9000].replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A")
-          print(f"::error title=Debug build failed::{escaped}")
+              excerpt = chr(10).join(lines[-120:])
+
+          # A check run keeps the text on GitHub's API (readable without the job log).
+          payload = {
+              "name": "Debug build diagnostics",
+              "head_sha": os.environ["GITHUB_SHA"],
+              "status": "completed",
+              "conclusion": "failure",
+              "output": {
+                  "title": "Debug build failed",
+                  "summary": "First errors from :app:assembleDebug",
+                  "text": excerpt[-60000:],
+              },
+          }
+          Path("/tmp/build-check.json").write_text(json.dumps(payload))
+          subprocess.run(
+              ["gh", "api", "-X", "POST",
+               f"repos/{os.environ['GITHUB_REPOSITORY']}/check-runs",
+               "--input", "/tmp/build-check.json"],
+              check=False,
+          )
+
+          # Short annotations too; the runner drops very long ones.
+          for line in [l for l in excerpt.splitlines() if l.startswith("e: ")][:3]:
+              print(f"::error title=Compile error::{line[:1200]}")
           PY
 
       - name: Run unit tests
