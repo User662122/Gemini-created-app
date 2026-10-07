@@ -51,7 +51,34 @@ jobs:
             "build-tools;36.0.0"
 
       - name: Build installable debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        id: build
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee app/build/ci-build.log
+
+      - name: Annotate build failure details
+        if: failure() && steps.build.outcome == 'failure'
+        env:
+          BUILD_LOG: app/build/ci-build.log
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          log = Path(os.environ["BUILD_LOG"])
+          lines = log.read_text(errors="replace").splitlines() if log.exists() else []
+          interesting = [
+              i for i, line in enumerate(lines)
+              if line.startswith("e: ") or "error:" in line.lower() or line.startswith("FAILURE:")
+          ]
+          if interesting:
+              start = max(0, min(interesting) - 5)
+              details = chr(10).join(lines[start:start + 60])
+          else:
+              details = chr(10).join(lines[-80:])
+          escaped = details[:9000].replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A")
+          print(f"::error title=Debug build failed::{escaped}")
+          PY
 
       - name: Run unit tests
         id: unit_tests
