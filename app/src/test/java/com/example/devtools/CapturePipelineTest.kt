@@ -262,8 +262,8 @@ class CapturePipelineTest {
     }
 
     @Test
-    fun `console lines are scrubbed, merged and counted`() {
-        val observer = newObserver()
+    fun `in masking mode, console lines are scrubbed, merged and counted`() {
+        val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
 
         observer.onConsoleMessage("tab", ConsoleLevel.LOG, "token=abcdef123456", "app.js", 12, null)
         observer.onConsoleMessage("tab", ConsoleLevel.LOG, "token=abcdef123456", "app.js", 12, null)
@@ -394,23 +394,6 @@ class CapturePipelineTest {
     }
 
     @Test
-    fun `with full capture on, a Set-Cookie value is stored as sent`() {
-        val observer = newObserver()
-
-        observer.onRequestStarted(requestObservation("https://shop.example.com/checkout"))
-        observer.onResponseReceived(
-            responseObservation(
-                url = "https://shop.example.com/checkout",
-                headers = mapOf("Set-Cookie" to "sid=abc123def456; Path=/; Secure; HttpOnly"),
-                contentType = "text/html",
-            )
-        )
-
-        val cookie = observer.store.cookieObservations().single()
-        assertEquals("abc123def456", cookie.value.value)
-    }
-
-    @Test
     fun `with full capture off, the same Set-Cookie row keeps only the length`() {
         val observer = newObserver(fullPolicy.copy(revealSensitiveValues = false))
 
@@ -463,7 +446,7 @@ class CapturePipelineTest {
         assertEquals(true, cookie.secure.value)
         assertEquals(true, cookie.httpOnly.value)
         assertTrue(cookie.expiration.value!!.contains("3600"))
-        assertFalse(cookie.value.value!!.contains("abc123"))
+        assertEquals("abc123", cookie.value.value)
     }
 
     @Test

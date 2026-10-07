@@ -122,7 +122,13 @@ class InspectorController(
     }
 
     override fun setSetting(setting: InspectorSetting, value: Boolean) {
+        val policyChanged = setting == InspectorSetting.FULL_CAPTURE
         settings.set(setting, value)
+        if (policyChanged) {
+            // Correlation keys depend on how URLs are stored, so in-flight requests from the old mode
+            // are dropped instead of being paired with a response indexed under the other form.
+            liveObserver.clearPendingCorrelations()
+        }
         if (setting == InspectorSetting.ENABLED && !value) {
             // Switching off must leave nothing behind, in memory or on screen.
             liveObserver.store.clearAll()

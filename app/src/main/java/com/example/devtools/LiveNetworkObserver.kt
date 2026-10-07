@@ -1356,6 +1356,27 @@ class LiveNetworkObserver(
         snapshot.forEach { retire(it) }
     }
 
+    /**
+     * Forgets every in-flight correlation.
+     *
+     * Correlation keys are built from the URL *as the inspector stores it*, so a request that was
+     * still waiting when the masking policy changed could never be paired with its response. Called by
+     * [InspectorController.setSetting] when the reveal switch is toggled; the rows already captured
+     * keep the form they were stored in, and the next response simply arrives as a new row.
+     */
+    fun clearPendingCorrelations() {
+        // addPending registers every request in all three indexes, so walking the per-tab index sees
+        // each of them exactly once.
+        pendingByTab.values.forEach { queue ->
+            val snapshot = ArrayList<PendingRequest>(queue.size)
+            synchronized(queue) { snapshot.addAll(queue) }
+            snapshot.forEach { it.live = false }
+        }
+        pendingByKey.clear()
+        pendingByUrl.clear()
+        pendingByTab.clear()
+    }
+
     /** `HTTP ERROR 404` style titles are the only status signal for responses the app does not intercept. */
     fun httpStatusFromErrorPageTitle(title: String?): Int? {
         val text = title?.trim() ?: return null
