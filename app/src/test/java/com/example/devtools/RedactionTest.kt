@@ -98,6 +98,16 @@ class RedactionTest {
     }
 
     @Test
+    fun `bare token, auth and session keys are scrubbed too`() {
+        val result = Redaction.scrubText("token=abcdef123456 auth=xyz987654 session=deadbeefcafe")
+
+        assertTrue(result.masked)
+        assertFalse(result.text.contains("abcdef123456"))
+        assertFalse(result.text.contains("xyz987654"))
+        assertFalse(result.text.contains("deadbeefcafe"))
+    }
+
+    @Test
     fun `scrubbing leaves ordinary prose alone`() {
         val result = Redaction.scrubText("Loaded 12 items in 340 ms from the catalog endpoint")
 

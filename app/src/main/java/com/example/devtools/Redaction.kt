@@ -238,8 +238,16 @@ object Redaction {
     private val URL_CREDENTIALS_PATTERN =
         Regex("""(?i)([a-z][a-z0-9+.\-]*://[^\s:@/]*):[^\s@/]+@""")
 
+    /**
+     * `key=value` / `"key": "value"` pairs whose *key* names a credential.
+     *
+     * Bare `token`, `auth`, `session` and `signature` are included on purpose: pages and libraries log
+     * `token=…`, `auth=…` and `session=…` constantly, and over-masking a debug line is a far cheaper
+     * mistake than printing a live credential. Anything this replaces is flagged as scrubbed in the UI.
+     */
     private val KEY_VALUE_PATTERN = Regex(
         """(?i)\b(password|passwd|pwd|passcode|secret|client[_-]?secret|api[_-]?key|apikey|""" +
+            """token|tokens|jwt|auth|authorization|bearer|session|signature|""" +
             """access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|session[_-]?id|""" +
             """sessionid|csrf[_-]?token|xsrf[_-]?token|otp|cvv|cvc|pin)["']?\s*[:=]\s*["']?""" +
             """([^\s"',;&}\]]{3,})"""
