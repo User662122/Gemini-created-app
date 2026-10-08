@@ -246,11 +246,20 @@ jobs:
           # The signing identity every build shares. Android refuses to install over an app signed by
           # a different key, so if this value ever changes between runs, every install needs a full
           # uninstall first — which is the one upgrade failure the download size cannot explain.
+          # apksigner, not keytool: AGP signs these APKs with the v2 scheme and no JAR signature, and
+          # keytool -printcert -jarfile can only read v1 JAR signatures.
+          APKSIGNER="$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
           fingerprint() {
-            keytool -printcert -jarfile "$1" 2>/dev/null \
-              | grep -m1 -i "SHA256:" \
-              | sed 's/.*SHA256: *//' \
-              || echo "unknown"
+            local digest=""
+            if [ -n "${APKSIGNER:-}" ] && [ -x "$APKSIGNER" ]; then
+              digest="$("$APKSIGNER" verify --print-certs "$1" 2>/dev/null \
+                | sed -n 's/^Signer #1 certificate SHA-256 digest: *//p' | head -1)"
+            fi
+            if [ -z "$digest" ]; then
+              digest="$(keytool -printcert -jarfile "$1" 2>/dev/null \
+                | sed -n 's/.*SHA256: *//p' | head -1)"
+            fi
+            printf '%s' "${digest:-unknown}"
           }
 
           {
@@ -268,7 +277,7 @@ jobs:
                 *armeabi*) for_what="Older 32-bit arm devices (armeabi-v7a)" ;;
                 *) for_what="Emulators (x86_64)" ;;
               esac
-              echo "| \`$base\` | $size | \`$(fingerprint "$file")\" | $for_what |"
+              echo "| \`$base\` | $size | \`$(fingerprint "$file")\` | $for_what |"
             done
             echo
             echo "Not sure which one? Run \`adb shell getprop ro.product.cpu.abi\`, or install the"
