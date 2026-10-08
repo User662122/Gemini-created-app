@@ -250,17 +250,26 @@ open class NetworkInspectorWebViewClient(
         }
     }
 
-    /** Plain-English cause for an `android.net.http.SslError` primary error code. */
-    private fun describeSslError(primaryError: Int): String = when (primaryError) {
-        SslError.SSL_NOT_YET_VALID -> "The server certificate is not valid yet"
-        SslError.SSL_EXPIRED -> "The server certificate has expired"
-        SslError.SSL_IDMISMATCH ->
-            "The certificate's hostname does not match the site being loaded"
-        SslError.SSL_UNTRUSTED ->
-            "The certificate's authority is not trusted by this device"
-        SslError.SSL_DATE_INVALID ->
-            "The certificate's date is invalid — often a wrong device clock"
-        else -> "A TLS/SSL error occurred"
+    /**
+     * Plain-English cause for an `android.net.http.SslError` primary error code.
+     *
+     * The numbers are the platform's `SslError.SSL_NOT_YET_VALID` … `SSL_INVALID` constants, written
+     * out because those static fields are not present in every compileSdk this project builds
+     * against (`getPrimaryError()` is, the constants are not). A diagnostic string should never be
+     * the thing that breaks a build, and the raw code is always shown alongside so the mapping stays
+     * checkable rather than taken on faith.
+     */
+    private fun describeSslError(primaryError: Int): String {
+        val cause = when (primaryError) {
+            0 -> "the server certificate is not valid yet"
+            1 -> "the server certificate has expired"
+            2 -> "the certificate's hostname does not match the site being loaded"
+            3 -> "the certificate's authority is not trusted by this device"
+            4 -> "the certificate's date is invalid, which often means a wrong device clock"
+            5 -> "the certificate is invalid"
+            else -> "the certificate was rejected for a reason this platform did not name"
+        }
+        return "TLS handshake refused ($cause)"
     }
 
     private fun isNetworkUrl(url: String): Boolean {
