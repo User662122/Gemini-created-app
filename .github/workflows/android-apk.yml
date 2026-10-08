@@ -243,32 +243,25 @@ jobs:
             exit 0
           fi
 
-          # The signing identity every build shares. Android refuses to install over an app signed by
-          # a different key, so if this value ever changes between runs, every install needs a full
-          # uninstall first — which is the one upgrade failure the download size cannot explain.
-          # apksigner, not keytool: AGP signs these APKs with the v2 scheme and no JAR signature, and
-          # keytool -printcert -jarfile can only read v1 JAR signatures.
-          APKSIGNER="$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
-          fingerprint() {
-            local digest=""
-            if [ -n "${APKSIGNER:-}" ] && [ -x "$APKSIGNER" ]; then
-              digest="$("$APKSIGNER" verify --print-certs "$1" 2>/dev/null \
-                | sed -n 's/^Signer #1 certificate SHA-256 digest: *//p' | head -1)"
-            fi
-            if [ -z "$digest" ]; then
-              digest="$(keytool -printcert -jarfile "$1" 2>/dev/null \
-                | sed -n 's/.*SHA256: *//p' | head -1)"
-            fi
-            printf '%s' "${digest:-unknown}"
-          }
+          # Android refuses to install an app over one signed by a different key, so the signing
+          # identity is published with every build: if it ever changes, the next install needs an
+          # uninstall first (losing tabs, history and bookmarks), and that should be visible on the
+          # releases page rather than discovered by a failed install.
+          #
+          # Every pipeline here ends in `|| true`: under `set -e` a probe that finds nothing must not
+          # take the release with it.
+          CERT_SHA="$(keytool -list -v -keystore keystore/dev-debug.p12 -storepass android \
+            -alias androiddebugkey 2>&1 | sed -n 's/.*SHA256: *//p' | head -1 || true)"
+          APK_SHA="$(keytool -printcert -jarfile "${files[0]}" 2>&1 \
+            | sed -n 's/.*SHA256: *//p' | head -1 || true)"
 
           {
             echo "Debug builds of this app, one APK per CPU architecture, rebuilt on every push to a"
             echo "tracked branch. The engine's native library is what makes these large, and it is"
             echo "per-architecture, so download only the APK your device needs."
             echo
-            echo "| APK | Size | SHA-256 of signing certificate | For |"
-            echo "| --- | --- | --- | --- |"
+            echo "| APK | Size | For |"
+            echo "| --- | --- | --- |"
             for file in "${files[@]}"; do
               base="$(basename "$file")"
               size="$(du -h "$file" | cut -f1)"
@@ -277,7 +270,7 @@ jobs:
                 *armeabi*) for_what="Older 32-bit arm devices (armeabi-v7a)" ;;
                 *) for_what="Emulators (x86_64)" ;;
               esac
-              echo "| \`$base\` | $size | \`$(fingerprint "$file")\` | $for_what |"
+              echo "| \`$base\` | $size | $for_what |"
             done
             echo
             echo "Not sure which one? Run \`adb shell getprop ro.product.cpu.abi\`, or install the"
@@ -287,6 +280,16 @@ jobs:
             echo "\`-r\` keeps the app's data, so tabs, history and bookmarks survive an upgrade."
             echo
             echo "Build: commit \`${GITHUB_SHA}\` of branch \`${GITHUB_REF_NAME}\` (workflow run ${GITHUB_RUN_ID})."
+            echo
+            echo "Signing certificate SHA-256 (the debug key in \`keystore/\`, and the same for every"
+            echo "build): \`${CERT_SHA:-unavailable}\`"
+            echo
+            echo "Read back from the APK itself: \`${APK_SHA:-unavailable}\`"
+            echo
+            echo "Because that key never changes, installing a newer APK over an older one is a normal"
+            echo "upgrade: the app keeps its data. If an install is ever refused with"
+            echo "\`INSTALL_FAILED_UPDATE_INCOMPATIBLE\`, the fingerprint above has changed — uninstall"
+            echo "once, then upgrading works again."
           } > /tmp/release-notes.md
 
           if gh release view "$tag" >/dev/null 2>&1; then

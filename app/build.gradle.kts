@@ -35,6 +35,23 @@ android {
       keyAlias = "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
+    getByName("debug") {
+      // A committed development key instead of whatever the build machine happens to have.
+      //
+      // Android refuses to install an app over one signed by a different key, and a CI runner's
+      // generated debug keystore is not guaranteed to be the same file from one run to the next.
+      // With the key pinned here, every build installs over the previous one and keeps its data —
+      // tabs, history, bookmarks, cookies — instead of requiring an uninstall. See keystore/README.md;
+      // the key is not a secret (it is the throwaway `androiddebugkey` every Android SDK creates).
+      storeFile = file("${rootDir}/keystore/dev-debug.p12")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+      storeType = "PKCS12"
+      // v1 in addition to the default v2/v3 schemes: a JAR-style signature is what tools that only
+      // understand v1 (keytool among them) can read, and nothing this app supports needs it dropped.
+      enableV1Signing = true
+    }
   }
 
   // Keep debug signing on Android Gradle Plugin's generated default key. A clean CI checkout
