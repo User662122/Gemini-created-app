@@ -72,6 +72,22 @@ android {
   }
 }
 
+// The Kotlin language level and the Kotlin stdlib version on the classpath are decided by two
+// different things: this project pins the compiler (2.2.10), while Gradle resolves the *newest* stdlib
+// any dependency asks for — and GeckoView 157 asks for 2.4.20. A compiler can read stdlib metadata up
+// to one minor version ahead of itself, so the mismatch is reported as an error rather than silently
+// producing something odd.
+//
+// Pinning the stdlib below what the engine declares would risk a NoSuchMethodError inside the engine
+// at runtime, which is worse than a compiler flag: the engine gets exactly the stdlib it was built
+// against, and the compiler is told to accept metadata from a newer release. Remove this the next time
+// the Kotlin plugin is upgraded to 2.4.x.
+kotlin {
+  compilerOptions {
+    freeCompilerArgs.add("-Xskip-metadata-version-check")
+  }
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
