@@ -3,7 +3,7 @@
 **Outcome: option B was chosen — Mozilla GeckoView (Gecko + SpiderMonkey) is now the app's engine.**
 It is implemented in `app/src/main/java/com/example/ui/engine/gecko/` and is the default; the WebView
 engine is still present, unmodified, and selectable in Settings. Sections 1–8 below are the original
-inspection, feasibility verdict and options; **sections 9–14 are the implementation, the concrete
+inspection, feasibility verdict and options; **sections 9–15 are the implementation, the concrete
 WebView → GeckoView API mapping, what changed for the user, and what this engine cannot do.**
 
 ---
@@ -129,9 +129,14 @@ than by inventing data:
 ## 13. What the first real build required (done, verified)
 
 The APK now builds on CI with Gecko linked: **run 37775054364, success** — `:app:assembleDebug` and
-`:app:testDebugUnitTest` both passed, and the debug APK came out at **271 MB** (arm64-v8a,
-armeabi-v7a and x86_64; a GeckoView APK of this size is normal — the engine's native library is
-roughly a hundred megabytes per architecture, and the JS/resources bundle is tens more).
+`:app:testDebugUnitTest` both passed. The first build produced a single universal APK of **271 MB**
+(arm64-v8a, armeabi-v7a and x86_64 in one file; a GeckoView APK of this size is normal — the engine's
+native library is tens of megabytes per architecture, and the JS/resources bundle is tens more).
+
+It now ships **one APK per architecture instead** (arm64-v8a ~117 MB, armeabi-v7a ~113 MB, x86_64
+~124 MB), signed with a pinned development key so a new build installs over the old one and keeps its
+data. See `docs/DISTRIBUTION.md` for the download URLs, why the engine is the size it is, and what can
+and cannot be made smaller.
 
 Five integration facts had to be settled to get there, all of them consequences of depending on a
 real engine rather than on the OS's:
@@ -154,7 +159,16 @@ in the tree.
 
 ---
 
-## 14. Cutover plan (unchanged gate)
+## 14. Downloads and upgrades
+
+`docs/DISTRIBUTION.md` covers the build outputs: which APK to download for which device, the stable
+release URLs (resumable, no GitHub login), why the engine makes them ~117 MB, how in-place upgrades are
+guaranteed by a committed signing key, and the honest limits — any code change still means a new APK,
+because Android replaces a sideloaded app wholesale.
+
+---
+
+## 15. Cutover plan (unchanged gate)
 
 The brief's gate still holds: **nothing is deleted until the replacement builds and runs.** Today both
 engines are in the tree and selectable; Gecko is the default. The remaining steps, in order:

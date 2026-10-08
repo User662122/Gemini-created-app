@@ -6,6 +6,12 @@ on:
       - arena/01a10696-gemini-created-app
       - arena/48b9d7a2-gemini-created-app
       - arena/8df31b3f-gemini-created-app
+    # Documentation-only pushes produce an identical APK; skip the build rather than make anyone
+    # wonder whether a new download is needed.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "keystore/README.md"
   pull_request:
     branches:
       - main
