@@ -226,7 +226,7 @@ jobs:
       # The tag is fixed and the assets are replaced on every push, so the URLs never change:
       #   https://github.com/<owner>/<repo>/releases/download/debug-latest/app-arm64-v8a-debug.apk
       - name: Publish APKs as a downloadable release
-        if: github.event_name == 'push' && success()
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -243,13 +243,23 @@ jobs:
             exit 0
           fi
 
+          # The signing identity every build shares. Android refuses to install over an app signed by
+          # a different key, so if this value ever changes between runs, every install needs a full
+          # uninstall first — which is the one upgrade failure the download size cannot explain.
+          fingerprint() {
+            keytool -printcert -jarfile "$1" 2>/dev/null \
+              | grep -m1 -i "SHA256:" \
+              | sed 's/.*SHA256: *//' \
+              || echo "unknown"
+          }
+
           {
             echo "Debug builds of this app, one APK per CPU architecture, rebuilt on every push to a"
             echo "tracked branch. The engine's native library is what makes these large, and it is"
             echo "per-architecture, so download only the APK your device needs."
             echo
-            echo "| APK | Size | For |"
-            echo "| --- | --- | --- |"
+            echo "| APK | Size | SHA-256 of signing certificate | For |"
+            echo "| --- | --- | --- | --- |"
             for file in "${files[@]}"; do
               base="$(basename "$file")"
               size="$(du -h "$file" | cut -f1)"
@@ -258,7 +268,7 @@ jobs:
                 *armeabi*) for_what="Older 32-bit arm devices (armeabi-v7a)" ;;
                 *) for_what="Emulators (x86_64)" ;;
               esac
-              echo "| \`$base\` | $size | $for_what |"
+              echo "| \`$base\` | $size | \`$(fingerprint "$file")\" | $for_what |"
             done
             echo
             echo "Not sure which one? Run \`adb shell getprop ro.product.cpu.abi\`, or install the"
