@@ -58,8 +58,19 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    // GeckoView requires Java 17 source/target compatibility; it uses Java 17 APIs internally.
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+  packaging {
+    jniLibs {
+      // How Firefox for Android itself ships Gecko: the engine's native libraries are compressed
+      // into the APK (legacy packaging) rather than stored page-aligned, and the architectures no
+      // current device uses are left out — GeckoView carries a library per ABI, and every one of
+      // them costs roughly a hundred megabytes.
+      excludes += ["**/armeabi/*.so", "**/mips/*.so", "**/mips64/*.so", "**/x86/*.so"]
+      useLegacyPackaging = true
+    }
   }
   buildFeatures {
     compose = true
@@ -85,6 +96,8 @@ android {
 kotlin {
   compilerOptions {
     freeCompilerArgs.add("-Xskip-metadata-version-check")
+    // Must match compileOptions above: AGP fails the build when the Java and Kotlin targets differ.
+    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
   }
 }
 

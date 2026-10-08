@@ -83,15 +83,32 @@ jobs:
 
           log = Path(os.environ["BUILD_LOG"])
           lines = log.read_text(errors="replace").splitlines() if log.exists() else []
-          interesting = [
-              i for i, line in enumerate(lines)
-              if line.startswith("e: ") or "error:" in line.lower() or line.startswith("FAILURE:")
+
+          first = next(
+              (
+                  i
+                  for i, line in enumerate(lines)
+                  if line.startswith("e: ") or "error:" in line.lower() or line.startswith("FAILURE:")
+              ),
+              max(0, len(lines) - 40),
+          )
+          head = chr(10).join(lines[max(0, first - 3):first + 40])
+
+          # Gradle puts the root cause on a "Caused by:" line *after* the stack trace, so a window
+          # from the first error alone can land entirely inside frames. Both parts are needed.
+          causes = [
+              line for line in lines
+              if "Caused by:" in line
+              or "Execution failed" in line
+              or line.lstrip().startswith("* What went wrong")
+              or line.lstrip().startswith("* Try:")
           ]
-          if interesting:
-              start = max(0, min(interesting) - 3)
-              excerpt = chr(10).join(lines[start:start + 120])
-          else:
-              excerpt = chr(10).join(lines[-120:])
+          tail = chr(10).join(lines[-90:])
+          excerpt = (
+              "--- first errors ---" + chr(10) + head
+              + chr(10) + "--- causes ---" + chr(10) + chr(10).join(causes[:20])
+              + chr(10) + "--- log tail ---" + chr(10) + tail
+          )
 
           # A check run keeps the text on GitHub's API (readable without the job log).
           payload = {
