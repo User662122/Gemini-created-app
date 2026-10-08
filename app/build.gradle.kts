@@ -68,7 +68,9 @@ android {
       // into the APK (legacy packaging) rather than stored page-aligned, and the architectures no
       // current device uses are left out — GeckoView carries a library per ABI, and every one of
       // them costs roughly a hundred megabytes.
-      excludes += ["**/armeabi/*.so", "**/mips/*.so", "**/mips64/*.so", "**/x86/*.so"]
+      excludes.addAll(
+        listOf("**/armeabi/*.so", "**/mips/*.so", "**/mips64/*.so", "**/x86/*.so")
+      )
       useLegacyPackaging = true
     }
   }
