@@ -13,7 +13,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import org.mozilla.geckoview.WebResponse
 import java.io.File
 import java.io.IOException
@@ -235,7 +234,6 @@ class GeckoDownloader(
             output.write(buffer, 0, read)
             total += read
             onProgress(total)
-            yield()
         }
         output.flush()
         return total

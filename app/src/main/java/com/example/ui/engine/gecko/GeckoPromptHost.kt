@@ -1,7 +1,6 @@
 package com.example.ui.engine.gecko
 
 import android.net.Uri
-import com.example.devtools.hasUrlScheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

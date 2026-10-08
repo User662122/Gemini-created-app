@@ -424,7 +424,7 @@ private fun runFind(
         GeckoSession.FINDER_FIND_BACKWARDS
     }
     session.finder.find(query, flags).accept(
-        { result -> onFindMatchesChanged(result.current, result.total) },
+        { result -> if (result != null) onFindMatchesChanged(result.current, result.total) },
         { onFindMatchesChanged(0, 0) }
     )
 }

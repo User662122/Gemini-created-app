@@ -25,6 +25,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -93,7 +94,7 @@ fun BrowserScreen(
             context = context.applicationContext,
             registry = viewModel.downloadRegistry,
             onDownloadStatus = { viewModel.onDownloadStatus(it) },
-            onExternalApp = { uri -> openExternally(context, uri) },
+            onExternalApp = { uri -> openExternally(context, Uri.parse(uri)) },
             onRecordedStep = { tabId, step -> viewModel.onAutomationStepRecorded(tabId, step) },
             onPageError = { tabId, message, source, line ->
                 inspector.dispatch(
@@ -574,7 +575,7 @@ fun BrowserScreen(
                         is GeckoPromptRequest.FileChooser ->
                             if (pendingFileRequest?.id != request.id) {
                                 pendingFileRequest = request
-                                if (request.multiple) {
+                                if (request.allowsMultiple) {
                                     pickMultipleFiles.launch(arrayOf("*/*"))
                                 } else {
                                     pickSingleFile.launch(
@@ -613,6 +614,7 @@ private fun ManageTabSessions(
     engine: GeckoEngine,
     engineKind: BrowserEngineKind,
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val javascriptEnabled = uiState.isJavaScriptEnabled
     val liveTabIds = remember(uiState.regularTabs, uiState.incognitoTabs) {
@@ -625,7 +627,7 @@ private fun ManageTabSessions(
     LaunchedEffect(isGeckoActive) {
         if (!isGeckoActive) return@LaunchedEffect
         engine.start()
-        GeckoRuntimeManager.ensureBridgeExtension()
+        GeckoRuntimeManager.ensureBridgeExtension(context)
     }
 
     // The extension installs asynchronously, and a session can only be given its message delegate
@@ -657,9 +659,16 @@ private fun openExternally(context: Context, uri: Uri) {
     }
 }
 
-/** `accept="image/*"` is already a MIME type; extensions such as `.pdf` are not. */
-private fun String.toMimeType(): String =
-    if (contains("/")) this else android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(
-        trim().removePrefix(".")
-    ) ?: "*/*"
+/**
+ * The MIME type for a file picker's accept value.
+ *
+ * A value with a slash in it is already a MIME type; a bare extension such as `.pdf` is not, and an
+ * unrecognised one falls back to accepting every type rather than to a picker that opens nothing.
+ */
+private fun String.toMimeType(): String {
+    if (contains("/")) return this
+    val byExtension = android.webkit.MimeTypeMap.getSingleton()
+        .getMimeTypeFromExtension(trim().removePrefix("."))
+    return byExtension ?: "*/*"
+}
 
