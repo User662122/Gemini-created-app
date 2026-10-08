@@ -1,3 +1,147 @@
+# Replacing the WebView browsing engine with an embedded, app-owned browser engine
+
+**Outcome: option B was chosen — Mozilla GeckoView (Gecko + SpiderMonkey) is now the app's engine.**
+It is implemented in `app/src/main/java/com/example/ui/engine/gecko/` and is the default; the WebView
+engine is still present, unmodified, and selectable in Settings. Sections 1–8 below are the original
+inspection, feasibility verdict and options; **sections 9–13 are the implementation, the concrete
+WebView → GeckoView API mapping, what changed for the user, and what this engine cannot do.**
+
+---
+
+## 9. What was built (the decision, applied)
+
+The brief asked for a real, app-owned rendering engine behind the existing Chrome-style UI, and named
+Blink/V8. Full Chromium embedding is not reachable from this repository (§7: no embeddable Chromium
+library exists, CEF has no Android support, a Chromium source build needs ≥100 GB and hours of build
+time, and option A was unavailable). You chose **B**, with an explicit override: *Gecko and SpiderMonkey
+instead of Blink*.
+
+Pinned dependency: `org.mozilla.geckoview:geckoview:157.0.20261005135250` (Maven Central of the Gecko
+project, `maven.mozilla.org`; the newest published release at the time of writing — verified against
+`…/org/mozilla/geckoview/geckoview/maven-metadata.xml`). `minSdk` 26, `extractNativeLibs="true"`.
+
+| File | What it is |
+| --- | --- |
+| `ui/engine/gecko/GeckoRuntimeManager.kt` | The one `GeckoRuntime` (the browser process): settings, the bundled bridge extension, and clearing the engine's own browsing data |
+| `ui/engine/gecko/GeckoTabSessions.kt` | One `GeckoSession` per tab, kept alive across tab switches; every delegate the app needs (navigation, progress, content, permission, prompt, selection), plus `describeLoadError` |
+| `ui/engine/gecko/GeckoEngine.kt` | The facade the UI holds: callbacks, per-tab events, selections, downloads, sharing |
+| `ui/engine/gecko/GeckoBrowserSurface.kt` | The Compose surface: same triggers in, same callbacks out as `WebViewContainer`, plus the selection actions bar |
+| `ui/engine/gecko/GeckoBridge.kt` | The app ↔ page channel (automation record/playback, uncaught page errors) |
+| `app/src/main/assets/browserbridge/` | The built-in WebExtension that channel is built on: `manifest.json` + `content.js` |
+| `ui/engine/gecko/GeckoDownloader.kt` | Writes downloads from the engine's own response body to MediaStore (Android 10+) or a file |
+| `ui/engine/gecko/GeckoPromptHost.kt` | The queue that turns engine callbacks into dialogs and the answers back into engine results |
+| `ui/components/EnginePromptDialogs.kt` | The dialogs GeckoView no longer draws for you: alert/confirm/prompt, HTTP auth, permissions, `<select>`, date/time |
+| `data/DownloadRegistry.kt`, `data/model/DownloadEntry.kt` | The download list, persisted |
+| `ui/engine/BrowserEngineKind.kt` | The engine choice, and clearing browsing data through whichever engine is active |
+| `ui/components/DownloadsDialog.kt` | The downloads screen the menu now opens |
+
+The engine is chosen in **Settings → Browser engine**, and the choice decides which surface
+`BrowserScreen` composes per tab. The rest of the app — tabs, omnibox, history, bookmarks, find,
+automations, the inspector UI — is unchanged, because it was already written against tab state and
+callbacks rather than against `WebView`.
+
+---
+
+## 10. WebView API → GeckoView API, as implemented
+
+This is §4's table, replaced with what the code actually does.
+
+| What the app used | WebView | GeckoView, as implemented here |
+| --- | --- | --- |
+| The view | `android.webkit.WebView` in an `AndroidView` | `org.mozilla.geckoview.GeckoView` in an `AndroidView`, showing a `GeckoSession` |
+| One tab | a `WebView` re-created on every tab switch (history lost) | one `GeckoSession` per tab, opened once, kept across switches (`setActive` hides it); history survives |
+| Load / reload / stop | `loadUrl`, `reload`, `stopLoading` | `GeckoSession.loadUri`, `reload`, `stop` |
+| Back / forward | `goBack`, `goForward`, `canGoBack()` | `goBack`, `goForward`, and `onCanGoBack`/`onCanGoForward` callbacks (there are no `canGoBack()` accessors — the pair is tracked) |
+| Page lifecycle | `onPageStarted` / `onPageFinished` / `onProgressChanged` | `onPageStart` / `onPageStop` / `onProgressChange`, plus `onLocationChange` for redirects, fragments and `pushState` |
+| Load errors | `onReceivedError` (`WebResourceError.getDescription()`) | `onLoadError` with `WebRequestError` — a code **and** a category, which is what `describeLoadError` explains to the user |
+| TLS problems | `onReceivedSslError` → `cancel()` | `onLoadError` with `ERROR_SECURITY_*` (`GeckoResult<String>` left null so Gecko shows its own error page) |
+| Renderer death | `onRenderProcessGone` (crash vs. kill) | `onCrash` / `onKill`, then the session is replaced and the page reloaded |
+| Title | `onReceivedTitle` | `onTitleChange` |
+| Diagnostics ("This page was closed to free memory", stalls) | `onPageEvent` string | same app-level callback, fed by `onCrash`/`onKill`, `onLoadError` and the load watchdog |
+| Settings block | `WebSettings` (`javaScriptEnabled`, `domStorageEnabled`, `databaseEnabled`, `cacheMode`, `mixedContentMode`, `userAgentString`, viewport, zoom) | `GeckoRuntimeSettings` (JavaScript, web fonts, login autofill, remote debugging) + `GeckoSessionSettings` (JavaScript, viewport/UA mode, private mode, tracking protection). Storage, cache and cookies are the engine's, not per-view toggles |
+| Incognito | `WebView` + cookie policy juggling | `GeckoSessionSettings.usePrivateMode(true)`, a private session in the same runtime |
+| Desktop site | hand-written Chrome UA string | Gecko's own desktop mode: `userAgentMode` + `viewportMode`, incl. `Sec-CH-UA` staying consistent with the UA |
+| Text selection menu | WebView's built-in action mode | `SelectionActionDelegate` → the app's own `SelectionActionsBar` (copy/cut/paste/select-all/share), with a clipboard-read request denied |
+| Find in page | `findAllAsync` / `setFindListener` | `GeckoSession.getFinder()` → `SessionFinder.find(query, flags)` → `FinderResult` (`current`, `total`) |
+| `addJavascriptInterface` | Java objects injected into pages (automation recorder, inspector) | **does not exist.** Implemented as a built-in WebExtension with native messaging (`assets/browserbridge`), whose content script shares the page's DOM from an isolated world |
+| `evaluateJavascript` | arbitrary script, arbitrary time | **no equivalent, deliberately.** Automation playback goes through the extension's `automation-step` messages; there is no way to run app-chosen script in a page, and the code does not pretend otherwise |
+| `onConsoleMessage` | every console call | `window.addEventListener('error'/'unhandledrejection')` from the content script: uncaught errors only (console output is not reachable from an isolated world) |
+| `shouldOverrideUrlLoading` | hand non-http schemes to the OS | `onLoadRequest`: deny + `Intent` for `mailto:`/`tel:`/app links; `javascript:` is denied outright |
+| `onCreateWindow` / `setSupportMultipleWindows` (absent) | — | `NavigationDelegate.onNewSession` and `PromptDelegate.onPopupPrompt`: user-initiated windows become app tabs, unsolicited popups are denied |
+| `onShowFileChooser` (absent) | — | `PromptDelegate.onFilePrompt` → `ActivityResultContracts.GetContent`/`OpenMultipleDocuments` → `FilePrompt.confirm(context, uris)` |
+| `onPermissionRequest` (absent) | — | `PermissionDelegate.onContentPermissionRequest` (geolocation/notifications/storage), `onMediaPermissionRequest` (camera/mic), `onAndroidPermissionsRequest` → the system runtime-permission prompt |
+| `setDownloadListener` (absent) | — | `ContentDelegate.onExternalResponse` → `GeckoDownloader` copies the engine's `WebResponse.body` (no second request) to MediaStore/Downloads, recorded in `DownloadRegistry` |
+| JS dialogs | drawn by WebView itself | `PromptDelegate.onAlertPrompt` / `onButtonPrompt` / `onTextPrompt`, drawn by `EnginePromptDialogs` |
+| HTTP auth dialog | drawn by WebView itself | `PromptDelegate.onAuthPrompt` (`AuthOptions.Flags.PROXY` distinguishes proxy auth) |
+| `<select>`, `<input type=date>`, color pickers | drawn by WebView itself | `onChoicePrompt` and `onDateTimePrompt` (platform pickers); a colour picker is dismissed rather than faked |
+| Clear browsing data | `WebStorage.deleteAllData()` + `CookieManager.removeAllCookies()`; history in Room | `StorageController.clearData(ClearFlags.ALL)` — cookies, DOM storage, cache, auth sessions, permissions — plus the existing Room history |
+| Networking, HTTPS, redirects, cache, cookies, storage | the OS WebView's stacks | Gecko's own network stack, TLS, redirect handling, HTTP cache and quota-managed site storage, with Enhanced Tracking Protection on |
+| `WebView.destroy()` | called when the view goes away | sessions are closed only when the tab is closed; the view is released on disposal |
+
+---
+
+## 11. What the user gets that the WebView build never had
+
+Everything in §3's "Reality" column that said **no** now works, because GeckoView asks the app instead
+of drawing UI the app cannot reach:
+
+* **Downloads** — real files, a download list (overflow menu → Downloads), progress, and a working
+  "open" for anything in shared storage. No storage permission on Android 10+.
+* **File uploads** — `<input type="file">`, multi-select and `webkitdirectory` all reach a picker.
+* **Permissions** — geolocation, notifications and storage access ask first; camera and microphone ask
+  *and* request the Android runtime permission. Nothing is silently granted, and nothing is silently
+  dropped.
+* **Popups** — `target="_blank"` and `window.open()` from a user gesture open a tab; unsolicited
+  popups are blocked, as in every browser.
+* **JavaScript dialogs and HTTP auth** — alert/confirm/prompt and sign-in prompts are real dialogs.
+* **Clear browsing data** — actually clears the engine's data, and says so.
+* **Enhanced Tracking Protection** — on by default via `useTrackingProtection`, which is what the
+  Settings screen has always implied.
+* **Per-tab history that survives tab switching** — WebView lost it on every switch.
+* **A desktop-site toggle that is the engine's own desktop mode**, not a UA string pasted onto a
+  mobile engine.
+
+---
+
+## 12. What this engine cannot do (and how the app behaves)
+
+These are GeckoView limits, not implementation gaps. Each one is handled by degrading honestly rather
+than by inventing data:
+
+1. **Cookies cannot be enumerated or set** — the public GeckoView API has no cookie accessor
+   (`StorageController` exposes clearing and permissions only; there is no `CookieManager`
+   equivalent). So the developer inspector's cookie panel cannot list the cookie jar under Gecko; the
+   panel is unpopulated, not wrong, and `docs/NETWORK_INSPECTOR.md` says so. Clearing cookies still
+   works (`ClearFlags.COOKIES`).
+2. **No request-level network capture** — GeckoView exposes no `shouldInterceptRequest` equivalent to
+   embedders. Under Gecko the inspector records document loads, load failures (with Gecko's own error
+   code and category) and uncaught page errors. For the full Network/Storage panels, the debug build
+   has Gecko's remote debugging enabled: `adb forward tcp:6000 localfilesystem:/data/data/<pkg>/firefox-debugger-socket`
+   and attach desktop Firefox DevTools. That is the documented, supported route, and it is gated on
+   `BuildConfig.DEBUG` so a release build exposes nothing.
+3. **No `evaluateJavascript`, and no page-world hooks** — a content script runs in an isolated world:
+   it shares the DOM but not `window.fetch`, `console.log` or other page objects. Anything that
+   claimed to capture those would silently miss most of them, so the app does not claim it.
+4. **Console output** — uncaught errors and unhandled rejections only, via the content script.
+
+---
+
+## 13. Cutover plan (unchanged gate)
+
+The brief's gate still holds: **nothing is deleted until the replacement builds and runs.** Today both
+engines are in the tree and selectable; Gecko is the default. The remaining steps, in order:
+
+1. CI builds the APK (`:app:assembleDebug`) with GeckoView linked — the first real verification, since
+   this sandbox has no JDK or Android SDK.
+2. On a device: browse, sign in, upload a file, download a file, open a popup, use a `<select>` and a
+   date field, check find-in-page and the selection bar, switch the engine back and forth.
+3. Then, and only then, delete the WebView engine: `ui/components/WebViewContainer.kt`, the two
+   `devtools/NetworkInspector*Client` classes, the `addJavascriptInterface` bridges, the
+   `android.webkit` imports, and the engine picker itself. §7's WebView-specific notes in
+   `docs/NETWORK_INSPECTOR.md` get rewritten at the same time.
+
+---
+
 # Replacing the WebView browsing engine with an embedded Chromium — inspection, mapping, plan, and feasibility verdict
 
 Status: **plan only — no code has been changed.** The brief says to stop and explain if full

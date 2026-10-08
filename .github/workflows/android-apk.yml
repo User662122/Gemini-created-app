@@ -50,10 +50,17 @@ jobs:
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
+          # Platform 37 is what GeckoView 157 (and the androidx libraries this project resolves)
+          # require to compile against. Each package is installed on its own so that a name which is
+          # not published under exactly this spelling cannot stop the job — Gradle downloads any
+          # missing SDK component itself once the licences above are accepted.
+          for package in \
             "platform-tools" \
+            "platforms;android-37" \
             "platforms;android-36.1" \
-            "build-tools;36.0.0"
+            "build-tools;36.0.0"; do
+            "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "$package" || true
+          done
 
       - name: Build installable debug APK
         id: build

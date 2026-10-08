@@ -206,7 +206,7 @@ fun BrowserScreen(
     // The embedded engine is started once the screen exists, and keeps a session for exactly the
     // tabs that are open. Starting it here rather than in the ViewModel keeps the engine's lifecycle
     // tied to what is on screen.
-    ManageTabSessions(viewModel = viewModel, engine = geckoEngine)
+    ManageTabSessions(viewModel = viewModel, engine = geckoEngine, engineKind = engineKind)
 
     LaunchedEffect(uiState.automationStatus, uiState.isRecordingAutomation, uiState.automationPlayback) {
         val status = uiState.automationStatus
@@ -608,14 +608,22 @@ fun BrowserScreen(
  * still open, so the engine can release the ones that are gone.
  */
 @Composable
-private fun ManageTabSessions(viewModel: BrowserViewModel, engine: GeckoEngine) {
+private fun ManageTabSessions(
+    viewModel: BrowserViewModel,
+    engine: GeckoEngine,
+    engineKind: BrowserEngineKind,
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val javascriptEnabled = uiState.isJavaScriptEnabled
     val liveTabIds = remember(uiState.regularTabs, uiState.incognitoTabs) {
         (uiState.regularTabs.map { it.id } + uiState.incognitoTabs.map { it.id }).toSet()
     }
+    // Starting the engine starts a browser process. Choosing the system engine must not pay for that,
+    // so everything here is gated on Gecko actually being the engine in use.
+    val isGeckoActive = engineKind == BrowserEngineKind.GECKO
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isGeckoActive) {
+        if (!isGeckoActive) return@LaunchedEffect
         engine.start()
         GeckoRuntimeManager.ensureBridgeExtension()
     }
@@ -623,12 +631,14 @@ private fun ManageTabSessions(viewModel: BrowserViewModel, engine: GeckoEngine) 
     // The extension installs asynchronously, and a session can only be given its message delegate
     // once it exists, so every open session is re-registered when the extension arrives.
     val bridgeExtension by GeckoRuntimeManager.bridgeExtension.collectAsStateWithLifecycle()
-    LaunchedEffect(bridgeExtension) {
-        if (bridgeExtension != null) engine.attachBridgeToOpenSessions()
+    LaunchedEffect(bridgeExtension, isGeckoActive) {
+        if (isGeckoActive && bridgeExtension != null) engine.attachBridgeToOpenSessions()
     }
 
     // JavaScript is a session setting, so it must be pushed into sessions that already exist.
-    LaunchedEffect(javascriptEnabled) { engine.setJavaScriptEnabled(javascriptEnabled) }
+    LaunchedEffect(javascriptEnabled, isGeckoActive) {
+        if (isGeckoActive) engine.sessions.setJavaScriptEnabled(javascriptEnabled)
+    }
 
     DisposableEffect(liveTabIds) {
         engine.keepSessionsFor(liveTabIds)

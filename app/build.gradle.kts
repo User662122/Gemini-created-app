@@ -10,7 +10,10 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  // API 37, not 36.1: GeckoView 157's AAR metadata requires it (and so do the androidx libraries
+  // this project already resolves). Compiling against a newer API says nothing about which devices
+  // can install the app — that is minSdk, below.
+  compileSdk { version = release(37) }
 
   defaultConfig {
     applicationId = "com.aistudio.chromebrowser.vktpnx"
