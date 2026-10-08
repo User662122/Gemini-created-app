@@ -145,6 +145,17 @@ class GeckoTabSessions(
         sessions.keys.filterNot { it in liveTabIds }.forEach(::close)
     }
 
+    /**
+     * Closes every session.
+     *
+     * Used when the engine itself goes away — the activity being recreated, for instance. A closed
+     * session is what releases the engine's native resources; leaving them open because the Kotlin
+     * object became garbage would leak one native session per tab per recreation.
+     */
+    fun closeAll() {
+        sessions.keys.toList().forEach(::close)
+    }
+
     /** Applies the global JavaScript switch to every open tab. */
     fun setJavaScriptEnabled(enabled: Boolean) {
         sessions.values.forEach { session -> session.settings.allowJavascript = enabled }

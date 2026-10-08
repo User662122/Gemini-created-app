@@ -86,6 +86,7 @@ fun BrowserScreen(
 
     val engineKind by viewModel.engineKind.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+    val bridgeError by GeckoRuntimeManager.bridgeError.collectAsStateWithLifecycle()
 
     // The embedded Gecko engine. Constructed eagerly but inert until `start()` is called, so
     // choosing the system engine costs nothing and the bridge/prompt plumbing always has a home.
@@ -600,6 +601,18 @@ fun BrowserScreen(
             LaunchedEffect(uiState.downloadStatusToken) {
                 uiState.downloadStatus?.let { statusSnackbarHostState.showSnackbar(it) }
             }
+
+            // The page bridge is a bundled extension. If it cannot be installed, the parts of the app
+            // that need to talk to pages (automation recording and playback, uncaught-error reports)
+            // are unavailable — which the user is told, rather than left to discover by silence.
+            LaunchedEffect(bridgeError) {
+                bridgeError?.let { reason ->
+                    statusSnackbarHostState.showSnackbar(
+                        "The page bridge did not load ($reason), so automation recording and " +
+                            "page-error reports are unavailable."
+                    )
+                }
+            }
         }
     }
 }
@@ -645,6 +658,12 @@ private fun ManageTabSessions(
     DisposableEffect(liveTabIds) {
         engine.keepSessionsFor(liveTabIds)
         onDispose { }
+    }
+
+    // Tab state outlives the screen; the engine's sessions do not. Closing them on the way out is
+    // what keeps native sessions from piling up across activity recreations.
+    DisposableEffect(engine) {
+        onDispose { engine.close() }
     }
 }
 

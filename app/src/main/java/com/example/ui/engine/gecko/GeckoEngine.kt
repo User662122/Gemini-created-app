@@ -163,6 +163,18 @@ class GeckoEngine(
     fun keepSessionsFor(liveTabIds: Set<String>) = sessions.keepOnly(liveTabIds)
 
     /**
+     * Releases every session this engine owns.
+     *
+     * Called when the screen that holds the engine goes away for good (the activity being recreated,
+     * for example). Tab *state* lives in the ViewModel and survives that; the engine's sessions do
+     * not, so they are closed here rather than left to leak native resources.
+     */
+    fun close() {
+        promptHost.clear()
+        sessions.closeAll()
+    }
+
+    /**
      * `navigator.share` and the selection bar's Share action.
      *
      * Returns whether Android's share sheet was shown; a device with no share target gets `false`
