@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - arena/01a10696-gemini-created-app
+      - arena/48b9d7a2-gemini-created-app
   pull_request:
     branches:
       - main
