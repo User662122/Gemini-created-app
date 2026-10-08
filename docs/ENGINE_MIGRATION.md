@@ -3,7 +3,7 @@
 **Outcome: option B was chosen — Mozilla GeckoView (Gecko + SpiderMonkey) is now the app's engine.**
 It is implemented in `app/src/main/java/com/example/ui/engine/gecko/` and is the default; the WebView
 engine is still present, unmodified, and selectable in Settings. Sections 1–8 below are the original
-inspection, feasibility verdict and options; **sections 9–13 are the implementation, the concrete
+inspection, feasibility verdict and options; **sections 9–14 are the implementation, the concrete
 WebView → GeckoView API mapping, what changed for the user, and what this engine cannot do.**
 
 ---
@@ -126,15 +126,43 @@ than by inventing data:
 
 ---
 
-## 13. Cutover plan (unchanged gate)
+## 13. What the first real build required (done, verified)
+
+The APK now builds on CI with Gecko linked: **run 37775054364, success** — `:app:assembleDebug` and
+`:app:testDebugUnitTest` both passed, and the debug APK came out at **271 MB** (arm64-v8a,
+armeabi-v7a and x86_64; a GeckoView APK of this size is normal — the engine's native library is
+roughly a hundred megabytes per architecture, and the JS/resources bundle is tens more).
+
+Five integration facts had to be settled to get there, all of them consequences of depending on a
+real engine rather than on the OS's:
+
+| Fact | Why | Where |
+| --- | --- | --- |
+| `compileSdk = 37` | GeckoView 157's AAR metadata requires it, and so do the androidx versions it pulls in (core 1.19.0, lifecycle 2.11.0) | `app/build.gradle.kts`; the CI job installs `platforms;android-37` |
+| `-Xskip-metadata-version-check` | GeckoView declares `kotlin-stdlib:2.4.20`; this project's compiler is 2.2.10, which reads stdlib metadata up to 2.3. Pinning the stdlib *down* would risk a `NoSuchMethodError` inside the engine, so the engine keeps the stdlib it was built against and the compiler accepts newer metadata | `app/build.gradle.kts` (`kotlin { }`) |
+| Java 17 source/target + `jvmTarget` 17 | GeckoView's own requirement; Kotlin and Java targets must match or AGP fails the build | `app/build.gradle.kts` |
+| `jniLibs.useLegacyPackaging = true`, unsupported ABIs excluded, no `android:extractNativeLibs` attribute | Exactly how Firefox for Android ships Gecko (`mobile/android/fenix/app/build.gradle`), and the combination that packages successfully; the manifest attribute conflicts with AGP's own native-packaging option | `app/build.gradle.kts`, `AndroidManifest.xml` |
+| `windowSoftInputMode="stateUnspecified|adjustResize"` | GeckoView's quick-start asks for it, so the on-screen keyboard resizes the page instead of covering it | `AndroidManifest.xml` |
+
+The CI job also prints the build's root-cause lines and log tail when it fails, because Gradle reports
+a packaging failure *after* the stack trace.
+
+What is **not** verified yet: anything that needs a device or emulator. There is none in this sandbox
+and none in CI, so rendering, cookies, downloads, file uploads, prompts and the bridge extension are
+unverified at runtime. That is the next step, listed below, and it is why the WebView engine is still
+in the tree.
+
+---
+
+## 14. Cutover plan (unchanged gate)
 
 The brief's gate still holds: **nothing is deleted until the replacement builds and runs.** Today both
 engines are in the tree and selectable; Gecko is the default. The remaining steps, in order:
 
-1. CI builds the APK (`:app:assembleDebug`) with GeckoView linked — the first real verification, since
-   this sandbox has no JDK or Android SDK.
-2. On a device: browse, sign in, upload a file, download a file, open a popup, use a `<select>` and a
-   date field, check find-in-page and the selection bar, switch the engine back and forth.
+1. ~~CI builds the APK (`:app:assembleDebug`) with GeckoView linked~~ — **done**, see §13.
+2. On a device: install the debug APK from the CI run's artifact, then browse, sign in, upload a file,
+   download a file, open a popup, use a `<select>` and a date field, check find-in-page and the
+   selection bar, and switch the engine back and forth in Settings → Browser engine.
 3. Then, and only then, delete the WebView engine: `ui/components/WebViewContainer.kt`, the two
    `devtools/NetworkInspector*Client` classes, the `addJavascriptInterface` bridges, the
    `android.webkit` imports, and the engine picker itself. §7's WebView-specific notes in
