@@ -62,6 +62,20 @@ android {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
   }
+  splits {
+    // One APK per CPU architecture.
+    //
+    // Gecko's native library *is* the app's size: it ships a full copy of Gecko per architecture, and
+    // a universal APK carries all of them while a phone can use exactly one. Splitting means each
+    // download is a third of the universal APK, and the universal APK is switched off for the same
+    // reason — it is the artifact nobody's device needs in full.
+    abi {
+      isEnable = true
+      reset()
+      include("arm64-v8a", "armeabi-v7a", "x86_64")
+      isUniversalApk = false
+    }
+  }
   packaging {
     jniLibs {
       // How Firefox for Android itself ships Gecko: the engine's native libraries are compressed
