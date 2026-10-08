@@ -3,12 +3,16 @@ package com.example.ui.components
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.http.SslError
+import android.os.Build
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.compose.foundation.background
@@ -57,8 +61,30 @@ import kotlin.coroutines.resume
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 private const val AUTOMATION_BRIDGE_NAME = "BrowserAutomation"
-private const val PAGE_READY_TIMEOUT_MS = 30_000L
-private const val AUTOMATION_ELEMENT_WAIT_MS = 400L
+
+/**
+ * How long a document may stay unfinished before the app says so.
+ *
+ * WebView has no navigation timeout of its own, so a server that accepts the connection and then
+ * stalls leaves the spinner running forever with nothing recorded anywhere. This is generous on
+ * purpose — it is well past a normal page load — and it only ever *reports*: the load is never
+ * cancelled, because a slow site that is still working must be allowed to finish.
+ */
+private const val LOAD_WATCHDOG_MS = 45_000L
+
+/** A page under heavy load can take far longer than this to become interactive, so keep it generous. */
+private const val PAGE_READY_TIMEOUT_MS = 60_000L
+private const val AUTOMATION_ELEMENT_WAIT_MS = 500L
+
+/** Total time one automation step may wait for its element to appear on a slow page. */
+private const val AUTOMATION_ELEMENT_TIMEOUT_MS = 15_000L
+
+/**
+ * How long a click may take to start a navigation before it is treated as a click that does not
+ * navigate. Sampling once after a short fixed sleep instead misreads every slow server as
+ * "no navigation happened" and runs the next step against a page that is about to be replaced.
+ */
+private const val AUTOMATION_NAVIGATION_START_TIMEOUT_MS = 2_500L
 private const val MAX_AUTOMATION_SELECTOR_LENGTH = 1_000
 private const val MAX_AUTOMATION_VALUE_LENGTH = 2_000
 
@@ -84,6 +110,15 @@ fun WebViewContainer(
     onPageStarted: (String, String) -> Unit,
     onPageFinished: (String, String, String?) -> Unit,
     onProgressChanged: (String, Int) -> Unit,
+    /**
+     * Reports why a page did not work, in words a person can act on: a refused certificate, a
+     * main-frame transport error, an HTTP status the server rejected the navigation with, a renderer
+     * the system killed, or a document that stalled.
+     *
+     * These are the failures that otherwise show up as a blank screen with no explanation, because
+     * WebView cancels or abandons the load and the page never runs far enough to report anything.
+     */
+    onPageEvent: (String, String) -> Unit,
     onNavigationStateChanged: (String, Boolean, Boolean) -> Unit,
     onFindMatchesChanged: (Int, Int) -> Unit,
     modifier: Modifier = Modifier
@@ -164,6 +199,23 @@ fun WebViewContainer(
         webViewInstance?.settings?.javaScriptEnabled = isJavaScriptEnabled
     }
 
+    // Load watchdog: one timer per navigation attempt (pageLoadCount increments in onPageStarted),
+    // so each new load restarts it and a finished load cancels it when pageIsLoading flips.
+    LaunchedEffect(pageLoadCount) {
+        if (pageLoadCount == 0) return@LaunchedEffect
+        delay(LOAD_WATCHDOG_MS)
+        if (!pageIsLoading) return@LaunchedEffect
+        val stalledUrl = webViewInstance?.url ?: tab.url
+        onPageEvent(
+            tab.id,
+            "This page has still been loading after ${LOAD_WATCHDOG_MS / 1000} seconds. The site is " +
+                "very slow or overloaded. Nothing has been cancelled — it may still finish."
+        )
+        inspector.dispatch(
+            InspectorMessage.DocumentLoadTimeout(tab.id, stalledUrl, LOAD_WATCHDOG_MS)
+        )
+    }
+
     LaunchedEffect(isRecordingAutomation) {
         webViewInstance?.evaluateJavascript(
             if (isRecordingAutomation) AutomationRecorderScripts.START else AutomationRecorderScripts.STOP,
@@ -225,11 +277,18 @@ fun WebViewContainer(
                 pageIsLoading = true
                 webView.loadUrl(playback.automation.startUrl)
                 if (!waitForPageAfter(finishesBeforeLoad)) {
-                    onAutomationPlaybackFinished(playback.runId, "Timed out loading the automation page.")
+                    onAutomationPlaybackFinished(
+                        playback.runId,
+                        "Timed out: the automation page had not finished loading after " +
+                            "${PAGE_READY_TIMEOUT_MS / 1000} s."
+                    )
                     return@LaunchedEffect
                 }
             } else if (!waitUntilPageIsReady()) {
-                onAutomationPlaybackFinished(playback.runId, "Timed out waiting for the page to finish loading.")
+                onAutomationPlaybackFinished(
+                    playback.runId,
+                    "Timed out: the page was still loading after ${PAGE_READY_TIMEOUT_MS / 1000} s."
+                )
                 return@LaunchedEffect
             }
 
@@ -238,20 +297,29 @@ fun WebViewContainer(
                 if (!waitUntilPageIsReady()) {
                     onAutomationPlaybackFinished(
                         playback.runId,
-                        "Stopped at step ${stepIndex + 1}: the page did not finish loading."
+                        "Stopped at step ${stepIndex + 1}: the page did not finish loading within " +
+                            "${PAGE_READY_TIMEOUT_MS / 1000} s."
                     )
                     return@LaunchedEffect
                 }
 
+                // Poll for the element until the budget runs out. The old loop gave up after six
+                // 400 ms attempts — about 2.4 s — which is enough for an idle page and nowhere near
+                // enough for a single-page app still rendering under load, so the run aborted with
+                // "element was not found" while the form was merely on its way.
                 var result = "missing"
-                for (attempt in 0 until 6) {
+                var waitedMs = 0L
+                while (true) {
                     result = evaluateAutomationStep(webView, step)
                     if (result != "missing") break
-                    if (attempt < 5) delay(AUTOMATION_ELEMENT_WAIT_MS)
+                    if (waitedMs >= AUTOMATION_ELEMENT_TIMEOUT_MS) break
+                    delay(AUTOMATION_ELEMENT_WAIT_MS)
+                    waitedMs += AUTOMATION_ELEMENT_WAIT_MS
                 }
                 if (result != "done") {
                     val detail = when (result) {
-                        "missing" -> "element was not found"
+                        "missing" -> "the element was still not on the page after " +
+                            "${AUTOMATION_ELEMENT_TIMEOUT_MS / 1000} s of waiting"
                         "error" -> "the page rejected the action"
                         else -> result
                     }
@@ -262,18 +330,28 @@ fun WebViewContainer(
                     return@LaunchedEffect
                 }
 
-                // Give click handlers a moment to start a document navigation. If they do,
-                // continue only after the new document has finished, not against the old page.
+                // Give click handlers time to start a document navigation. If they do, continue only
+                // after the new document has finished, not against the old page.
                 val finishesBeforeClick = pageFinishCount
                 val loadsBeforeClick = pageLoadCount
                 if (step.action == AutomationAction.CLICK) {
-                    delay(350L)
-                    val navigationStarted = pageIsLoading || pageLoadCount > loadsBeforeClick
+                    // Poll for the navigation instead of sampling once after a fixed 350 ms sleep.
+                    // On a slow server the response has not arrived yet at 350 ms, so the old check
+                    // concluded "this click does not navigate" and immediately ran the next step
+                    // against a page that was about to be replaced — which is how one slow response
+                    // turned into a cascade of "element was not found" failures on every later step.
+                    val navigationStarted = withTimeoutOrNull(AUTOMATION_NAVIGATION_START_TIMEOUT_MS) {
+                        snapshotFlow { Triple(pageIsLoading, pageLoadCount, pageFinishCount) }
+                            .first { (loading, loads, finishes) ->
+                                loading || loads > loadsBeforeClick || finishes > finishesBeforeClick
+                            }
+                    } != null
                     if (navigationStarted && pageFinishCount <= finishesBeforeClick) {
                         if (!waitForPageAfter(finishesBeforeClick)) {
                             onAutomationPlaybackFinished(
                                 playback.runId,
-                                "Stopped at step ${stepIndex + 1}: the next page timed out."
+                                "Stopped at step ${stepIndex + 1}: the next page did not finish " +
+                                    "loading within ${PAGE_READY_TIMEOUT_MS / 1000} s."
                             )
                             return@LaunchedEffect
                         }
@@ -410,7 +488,55 @@ fun WebViewContainer(
                                     pageIsLoading = false
                                     pageFinishCount += 1
                                     onProgressChanged(tab.id, 100)
+                                    // WebView only hands over a code and a description here, but that
+                                    // is the difference between "no internet", "DNS failed" and "the
+                                    // server timed out" — exactly what a blank screen cannot say.
+                                    val description = error?.description?.toString()
+                                        ?: "an unknown network error"
+                                    onPageEvent(
+                                        tab.id,
+                                        "The page could not be loaded: $description" +
+                                            (error?.errorCode?.let { " (errorCode=$it)" } ?: "") + "."
+                                    )
                                 }
+                            }
+
+                            override fun onReceivedHttpError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                errorResponse: WebResourceResponse?
+                            ) {
+                                // super records it for the inspector; this override only adds the
+                                // user-visible reason. Loading state is left alone on purpose:
+                                // WebView still renders the error body and calls onPageFinished, and
+                                // finishing the page twice would confuse automation step tracking.
+                                super.onReceivedHttpError(view, request, errorResponse)
+                                if (request?.isForMainFrame == true && errorResponse != null) {
+                                    val reason = errorResponse.reasonPhrase?.takeIf { it.isNotBlank() }
+                                    onPageEvent(
+                                        tab.id,
+                                        "The server refused this page with HTTP ${errorResponse.statusCode}" +
+                                            (reason?.let { " ($it)" } ?: "") +
+                                            ". The site rejected the request, so nothing was rendered."
+                                    )
+                                }
+                            }
+
+                            override fun onReceivedSslError(
+                                view: WebView?,
+                                handler: SslErrorHandler?,
+                                error: SslError?
+                            ) {
+                                // super records the cause and cancels the load, which is the safe
+                                // default and is never overridden here.
+                                super.onReceivedSslError(view, handler, error)
+                                pageIsLoading = false
+                                onProgressChanged(tab.id, 100)
+                                onPageEvent(
+                                    tab.id,
+                                    "The secure connection was rejected and the page was not loaded. " +
+                                        "This app does not bypass certificate errors."
+                                )
                             }
 
                             override fun onRenderProcessGone(
@@ -428,9 +554,27 @@ fun WebViewContainer(
                                         )
                                     }
                                 }
+                                // Without this the tab silently goes blank and reloads, and there is
+                                // no way to tell a page that crashed from one Android killed to
+                                // reclaim memory — which matters, because the second one repeats on
+                                // heavy sites and no amount of reloading will fix it.
+                                val killedForMemory = detail != null &&
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                    !detail.didCrash()
+                                onPageEvent(
+                                    tab.id,
+                                    if (killedForMemory) {
+                                        "The page was closed by Android to free memory, and is " +
+                                            "reloading. A heavy site can do this repeatedly on a " +
+                                            "low-memory device — close other tabs to help it."
+                                    } else {
+                                        "The page stopped unexpectedly and is reloading."
+                                    }
+                                )
                                 view?.let {
                                     (it.parent as? ViewGroup)?.removeView(it)
                                     it.removeJavascriptInterface(AUTOMATION_BRIDGE_NAME)
+                                    it.removeJavascriptInterface(InspectorScripts.BRIDGE_NAME)
                                     it.destroy()
                                 }
                                 webViewInstance = null

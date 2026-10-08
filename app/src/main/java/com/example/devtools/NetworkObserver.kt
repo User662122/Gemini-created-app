@@ -30,6 +30,23 @@ interface NetworkObserver {
     /** An HTTP status of 400+ for any resource, reported by `onReceivedHttpError`. */
     fun onHttpError(observation: HttpErrorObservation)
 
+    /**
+     * A TLS/SSL error that made WebView cancel the load (`onReceivedSslError`).
+     *
+     * Without this channel the failure is invisible: WebView's default behaviour is to cancel the
+     * navigation, so no response is ever delivered, the page never runs, and the console stays empty.
+     */
+    fun onSslError(observation: SslErrorObservation)
+
+    /**
+     * The main-frame document still had not finished [elapsedMillis] after it started.
+     *
+     * Reported by the browser's load watchdog. It never cancels the load — WebView has no built-in
+     * navigation timeout, so a stalled server otherwise leaves the spinner running forever with
+     * nothing recorded anywhere.
+     */
+    fun onDocumentLoadTimeout(tabId: String, url: String?, elapsedMillis: Long)
+
     /** HTTP authentication challenge (`onReceivedHttpAuthRequest`). */
     fun onAuthenticationRequest(observation: AuthObservation)
 
@@ -69,6 +86,8 @@ object NullNetworkObserver : NetworkObserver {
     override fun onResponseReceived(observation: ResponseObservation) = Unit
     override fun onRequestFailed(observation: FailureObservation) = Unit
     override fun onHttpError(observation: HttpErrorObservation) = Unit
+    override fun onSslError(observation: SslErrorObservation) = Unit
+    override fun onDocumentLoadTimeout(tabId: String, url: String?, elapsedMillis: Long) = Unit
     override fun onAuthenticationRequest(observation: AuthObservation) = Unit
     override fun onPageRecords(tabId: String, json: String) = Unit
     override fun onConsoleMessage(
@@ -180,5 +199,24 @@ data class AuthObservation(
     val url: String,
     val host: String,
     val realm: String?,
+    val observedAtMillis: Long,
+)
+
+/**
+ * A TLS/SSL error that cancelled a load.
+ *
+ * `android.net.http.SslError` is deliberately not referenced here so this file stays free of Android
+ * types and can be exercised by plain JVM tests; the WebView adapter flattens it into [description]
+ * and [primaryError] before dispatching.
+ */
+data class SslErrorObservation(
+    val tabId: String,
+    val url: String,
+    /** Human-readable cause, e.g. "The certificate has expired". */
+    val description: String,
+    /** `SslError.getPrimaryError()`, kept so the raw code stays checkable. */
+    val primaryError: Int?,
+    /** Null when WebView did not say which frame the handshake belonged to. */
+    val isForMainFrame: Boolean?,
     val observedAtMillis: Long,
 )

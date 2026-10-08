@@ -69,7 +69,20 @@ data class BrowserUiState(
     val recordingAutomationStartUrl: String? = null,
     val recordingAutomationSteps: List<AutomationStep> = emptyList(),
     val automationPlayback: AutomationPlayback? = null,
-    val automationStatus: String? = null
+    val automationStatus: String? = null,
+    /**
+     * The most recent reason a page did not work, in words a person can act on: a refused
+     * certificate, a main-frame transport error, an HTTP status the server rejected the navigation
+     * with, a renderer Android killed for memory, or a document that stalled.
+     *
+     * These all used to present as a blank screen with nothing to explain it.
+     */
+    val pageStatus: String? = null,
+    /**
+     * Increments per page event so an identical failure twice in a row is still announced twice —
+     * a renderer killed repeatedly is the case that most needs to be visible.
+     */
+    val pageStatusToken: Long = 0L
 ) {
     val currentTab: BrowserTab?
         get() {
@@ -439,6 +452,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun onNavigationStateChanged(tabId: String, canGoBack: Boolean, canGoForward: Boolean) {
         updateTabState(tabId) {
             it.copy(canGoBack = canGoBack, canGoForward = canGoForward)
+        }
+    }
+
+    /**
+     * Announces why a page did not work, instead of leaving the user with a blank screen.
+     *
+     * Called from WebView callbacks on the UI thread. The message is deliberately kept even when the
+     * page then recovers (a renderer restart reloads by itself): the reload happens *because* of the
+     * failure, and hiding the failure is what made the peak-load behaviour impossible to understand.
+     */
+    fun onPageEvent(tabId: String, message: String) {
+        if (message.isBlank()) return
+        _uiState.update { state ->
+            val current = state.currentTab
+            // Only the tab on screen owns a WebView, but ignore anything else defensively so a
+            // background tab can never raise a snackbar about a page nobody is looking at.
+            if (current != null && current.id != tabId) return@update state
+            state.copy(
+                pageStatus = message,
+                pageStatusToken = state.pageStatusToken + 1L
+            )
         }
     }
 

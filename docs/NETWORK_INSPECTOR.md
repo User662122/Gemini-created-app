@@ -54,6 +54,7 @@ available to a third-party app, with the reason shown in the UI.
 | Cookies: name, value | yes (value masked) | `CookieManager.getCookie(url)` and observed `Set-Cookie` headers |
 | Cookie attributes (Domain, Path, Secure, HttpOnly, Expires) | partial | only when the app actually observed a `Set-Cookie` header. `getCookie(url)` returns `name=value` pairs only, and `getCookie(url, includeAttributes)` is not available to third-party apps — such fields are shown as "not available, and here is why" instead of being guessed |
 | JavaScript console | yes | `WebChromeClient.onConsoleMessage` plus `window.onerror` |
+| Failures the page cannot report | yes | recorded by the app itself: `onRenderProcessGone` (and whether the renderer *crashed* or was *killed for memory*), `onReceivedSslError`, main-frame `onReceivedError`/`onReceivedHttpError`, and a load watchdog for a document that never finishes. Each becomes a FAILED row plus a console line tagged *inferred by the inspector*, because in these cases the page never ran far enough to say anything |
 | Service-worker traffic | no | requests issued by a service worker never reach `WebViewClient`. Would need `androidx.webkit`'s `ServiceWorkerControllerCompat` (see §11) |
 | WebSocket (`ws:`/`wss:`) frames | no | WebView exposes no API for them at all |
 | Cache hits / preflight requests | no | not reported; a request that never produces a callback is marked *unobserved*, not *failed* |
@@ -404,9 +405,41 @@ Both are deliberately *not* wired in, because each needs a dependency or app-lev
 | Status/headers empty for a resource | Platform limitation for sub-resources — see §1. `onReceivedHttpError` covers 4xx/5xx; other statuses are simply not reported |
 | Cookie attributes all "not available" | `CookieManager.getCookie(url)` returns `name=value` only. Attributes appear once the app observes a real `Set-Cookie` response header |
 | Page's `fetch` calls missing | The hooks are injected after the document starts; requests fired before that (or from a service worker) are not logged. Reloading the page with the inspector open usually shows them |
-| Console empty | `console.debug`/`console.info` need the "verbose" switch; also check the console filter |
+| Console empty | `console.debug`/`console.info` need the "verbose" switch; also check the console filter. If the page never ran — a blocked navigation, a refused certificate, a killed renderer — there is no page console to capture, and the app's own diagnosis rows (tagged *inferred by the inspector*) are what remains |
+| The page went blank and reloaded itself | The WebView renderer died. The inspector now records one FAILED row saying whether it **crashed** (a fault in the page) or was **killed by the system to reclaim memory** (a heavy page on a low-RAM device), plus how many requests were still in flight. The browser also shows this as a message instead of failing silently |
+| Blank page, nothing in the console, no HTTP status | Look for a `TLS/SSL error` row. WebView cancels the load when it rejects a certificate, so no response is ever delivered. This app never calls `SslErrorHandler.proceed()` — it reports the cause instead of bypassing it |
+| Spinner runs forever, nothing recorded | The document stalled and WebView has no navigation timeout. After 45 s the load watchdog reports it in the console and as a browser message. It never cancels the load: a slow page that is still working is allowed to finish |
+| `HTTP 403`/`503` on the main document | The server rejected the navigation itself, so the page's JavaScript never started — which is why an otherwise busy session can export with **zero** console lines and no page-hook rows. The console now carries one `HTTP nnn on the main document …` line explaining exactly that |
+| Automation stops with "element was not found" on a slow site | One step now waits up to 15 s for its element instead of ~2.4 s, and a click waits up to 2.5 s for a navigation to start instead of sampling once at 350 ms. Both were tuned for an idle page and misread a loaded one as broken |
 | Nothing at all is captured | Check the `ENABLED` switch on the Info tab, then the four gate conditions in §3 |
 | Everything shows `•••••• (n chars)` | "Reveal sensitive values" was off when those rows were captured. Turn it on and reload the page |
 | The export file is empty / nothing happens | The inspector is switched off or nothing has been captured yet; the toast says which |
 | I cannot find the exported file | Android 10+: `Downloads/NetworkInspector/`. Older: wherever you chose in the save dialog |
 | Release APK: is any of this still there? | The UI code is present but unreachable (`NullInspectorRuntime`), no bridge is added to pages, and the capture engine is only reachable through the debug `Application` subclass, which is not compiled into release builds |
+
+### 12b. Why a site can work off-peak and fail at peak
+
+A very common report is "the browser is fine all day, then it dies completely at the moment the site
+gets busy". Comparing an off-peak export with a peak one makes the cause readable in a few lines:
+
+| In the export | Off-peak | Peak | What it means |
+| --- | --- | --- | --- |
+| `Entries` | hundreds | few dozen | the page never got far enough to make its usual calls |
+| `Console lines` | many | **0** | the page's JavaScript never started, so there was nothing to log |
+| Rows tagged `injected JS hook` | present | **absent** | the `fetch`/XHR hooks were never reached — the document itself failed |
+| Main-document status | 200 | 403 / 503 | the server or its CDN rejected the navigation outright |
+| `TLS/SSL error` row | — | sometimes | the handshake was refused and the load cancelled |
+| `renderer process was killed … to reclaim memory` | — | sometimes | the device ran out of RAM on a heavy page |
+
+Read together, "few entries + zero console lines + no page-hook rows" is not a broken inspector. It is
+the signature of a navigation that never produced a working document: the server refused it, the TLS
+handshake was rejected, the renderer was killed, or the response never arrived at all. Each of those
+now leaves its own row and console line, so the distinction is written down instead of having to be
+guessed.
+
+What this feature deliberately does **not** do is anything about it. A 403 from a site's anti-bot or
+rate-limiting layer is that site's decision, and this inspector neither evades nor works around it —
+no fingerprint or user-agent spoofing, no challenge solving, no retry storm. It reports the status,
+the headers the platform exposed, and any reference or tracking identifier the server returned, so
+the failure can be understood and raised with the site's owner. See §1 and the top of this document
+for the scope this tool keeps itself to.

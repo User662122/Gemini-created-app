@@ -216,6 +216,187 @@ class CapturePipelineTest {
         assertTrue(entry.response!!.errorDescription!!.value!!.contains("ERR_NAME_NOT_RESOLVED"))
     }
 
+    // The failures below are the ones that used to leave the inspector completely empty, because the
+    // page that would normally report them is dead, never loaded, or still hanging. Each one is now
+    // recorded by the app itself, so an exported session always says what happened.
+
+    @Test
+    fun `a dead renderer is recorded even when nothing was in flight`() {
+        val observer = newObserver()
+
+        observer.onRequestFailed(
+            FailureObservation(
+                tabId = "tab",
+                url = "",
+                description = "The WebView renderer process was killed — the system killed it " +
+                    "to reclaim memory",
+                errorCode = null,
+                isForMainFrame = true,
+                method = UNKNOWN_METHOD,
+                observedAtMillis = System.currentTimeMillis(),
+                isRendererProcessDeath = true,
+            )
+        )
+
+        val entry = entries(observer)[0]
+        assertEquals(EntryState.FAILED, entry.state)
+        assertTrue(entry.notes.contains(InspectorExplanations.APP_OBSERVED_FAILURE))
+        assertTrue(entry.response!!.errorDescription!!.value!!.contains("renderer process was killed"))
+        // A dead renderer usually cannot report its URL; say so rather than storing a blank row.
+        assertTrue(entry.url.contains("URL not reported"))
+
+        val console = observer.store.snapshot(0L).console
+        assertEquals(1, console.size)
+        assertEquals(ConsoleLevel.ERROR, console[0].level)
+        // The app generated this line, so it must never look like output the page produced.
+        assertEquals(EvidenceSource.DERIVED, console[0].evidence)
+    }
+
+    @Test
+    fun `a dead renderer fails the requests still waiting and says how many`() {
+        val observer = newObserver()
+        val url = "https://example.com/slow"
+
+        observer.onRequestStarted(requestObservation(url))
+        observer.onRequestFailed(
+            FailureObservation(
+                tabId = "tab",
+                url = url,
+                description = "The WebView renderer process was killed",
+                errorCode = null,
+                isForMainFrame = true,
+                method = "GET",
+                observedAtMillis = System.currentTimeMillis(),
+                isRendererProcessDeath = true,
+            )
+        )
+
+        val snapshot = entries(observer)
+        assertEquals(2, snapshot.size)
+        assertTrue(snapshot.all { it.state == EntryState.FAILED })
+        val diagnosis = snapshot.first { it.notes.contains(InspectorExplanations.APP_OBSERVED_FAILURE) }
+        assertTrue(
+            diagnosis.response!!.errorDescription!!.value!!.contains("1 request(s) were still in flight")
+        )
+    }
+
+    @Test
+    fun `a refused certificate is recorded instead of cancelling the load silently`() {
+        val observer = newObserver()
+
+        observer.onSslError(
+            SslErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/booking",
+                description = "The server certificate has expired",
+                primaryError = 2,
+                isForMainFrame = null,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+
+        val entry = entries(observer)[0]
+        assertEquals(EntryState.FAILED, entry.state)
+        assertTrue(entry.notes.contains(InspectorExplanations.SSL_ERROR_CANCELLED))
+        assertTrue(entry.response!!.errorDescription!!.value!!.contains("certificate has expired"))
+        assertEquals(1, observer.store.snapshot(0L).console.size)
+    }
+
+    @Test
+    fun `a stalled document is reported but its waiting rows are not called failed`() {
+        val observer = newObserver()
+        val url = "https://example.com/hanging"
+
+        observer.onRequestStarted(requestObservation(url, isMainFrame = true))
+        observer.onDocumentLoadTimeout("tab", url, 45_000L)
+
+        val entry = entries(observer)[0]
+        // It may still load, so claiming a failure here would be a lie.
+        assertEquals(EntryState.PENDING, entry.state)
+        assertTrue(entry.notes.any { it.contains("45 s") })
+
+        val console = observer.store.snapshot(0L).console
+        assertEquals(1, console.size)
+        assertEquals(ConsoleLevel.WARN, console[0].level)
+        assertTrue(console[0].message.contains("Load watchdog"))
+    }
+
+    @Test
+    fun `a main frame HTTP error explains itself in the console, a sub resource does not`() {
+        val observer = newObserver()
+
+        observer.onHttpError(
+            HttpErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/logo.png",
+                method = "GET",
+                statusCode = 403,
+                reasonPhrase = null,
+                headers = emptyMap(),
+                isForMainFrame = false,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+        assertTrue(observer.store.snapshot(0L).console.isEmpty())
+
+        observer.onHttpError(
+            HttpErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/",
+                method = "GET",
+                statusCode = 403,
+                reasonPhrase = null,
+                headers = emptyMap(),
+                isForMainFrame = true,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+        val console = observer.store.snapshot(0L).console
+        assertEquals(1, console.size)
+        assertTrue(console[0].message.contains("HTTP 403 on the main document"))
+    }
+
+    @Test
+    fun `the same main frame failure reported twice is one console row, not two`() {
+        val observer = newObserver()
+        val observation = HttpErrorObservation(
+            tabId = "tab",
+            url = "https://example.com/",
+            method = "GET",
+            statusCode = 503,
+            reasonPhrase = null,
+            headers = emptyMap(),
+            isForMainFrame = true,
+            observedAtMillis = System.currentTimeMillis(),
+        )
+
+        observer.onHttpError(observation)
+        observer.onHttpError(observation)
+
+        val console = observer.store.snapshot(0L).console
+        assertEquals(1, console.size)
+        assertEquals(2, console[0].repeatCount)
+    }
+
+    @Test
+    fun `app diagnoses respect the console switch but always keep the network row`() {
+        val observer = newObserver(fullPolicy.copy(captureConsole = false))
+
+        observer.onSslError(
+            SslErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/",
+                description = "The certificate's authority is not trusted by this device",
+                primaryError = 4,
+                isForMainFrame = null,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+
+        assertEquals(1, entries(observer).size)
+        assertTrue(observer.store.snapshot(0L).console.isEmpty())
+    }
+
     @Test
     fun `page JavaScript details merge into the WebView entry instead of duplicating it`() {
         val observer = newObserver()

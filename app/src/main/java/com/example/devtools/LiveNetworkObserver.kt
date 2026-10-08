@@ -155,7 +155,12 @@ class LiveNetworkObserver(
         if (!policy.enabled) return
 
         if (observation.isRendererProcessDeath) {
-            val changed = store.updateEntriesForTab(observation.tabId) { entry ->
+            // Annotate whatever was still in flight, then *always* leave a record of the event
+            // itself. This is the failure that used to be completely invisible: when the renderer
+            // dies the page is gone, so nothing reaches onConsoleMessage and no response callback
+            // can ever arrive. If no request happened to be pending, the old code stored nothing at
+            // all and the session looked as though it had never failed.
+            val affected = store.updateEntriesForTab(observation.tabId) { entry ->
                 if (entry.state == EntryState.PENDING) {
                     entry.copy(
                         state = EntryState.FAILED,
@@ -165,8 +170,37 @@ class LiveNetworkObserver(
                     entry
                 }
             }
-            if (changed > 0) clearPendingForTab(observation.tabId)
+            // Every correlation for this tab is dead with the renderer, whether or not a row was
+            // still pending, so none of them may be paired with a later response.
+            clearPendingForTab(observation.tabId)
+            recordAppDiagnosis(
+                policy = policy,
+                tabId = observation.tabId,
+                url = observation.url,
+                method = observation.method,
+                isForMainFrame = true,
+                description = observation.description +
+                    if (affected > 0) " ($affected request(s) were still in flight)" else "",
+                note = InspectorExplanations.RENDERER_PROCESS_GONE,
+                observedAtMillis = observation.observedAtMillis,
+            )
             return
+        }
+
+        // A main-frame failure is the one a reader actually cares about ("why is my page blank?"),
+        // and it is precisely the case where the page produced no console output of its own, so the
+        // app has to say it. Sub-resource failures stay in the network list only: a page can lose
+        // dozens of images or beacons without the user noticing, and logging each would bury the
+        // console (and burn the console rate budget) for no benefit.
+        if (observation.isForMainFrame) {
+            addDiagnosisConsoleLine(
+                policy = policy,
+                tabId = observation.tabId,
+                level = ConsoleLevel.ERROR,
+                message = "The page failed to load: ${observation.description}" +
+                    (observation.errorCode?.let { " (WebResourceError errorCode=$it)" } ?: "") +
+                    " — ${observation.url}",
+            )
         }
 
         val now = System.currentTimeMillis()
@@ -209,6 +243,23 @@ class LiveNetworkObserver(
     override fun onHttpError(observation: HttpErrorObservation) {
         val policy = capturePolicy()
         if (!policy.enabled) return
+
+        // A 4xx/5xx on the main document means the server rejected the navigation itself, so the
+        // page's scripts never ran and its console never produced a line. This is the row that
+        // explains a "the site just refused me and showed me nothing" session. When the same failure
+        // also arrives through the error-page title, addConsole collapses the repeat.
+        if (observation.isForMainFrame) {
+            addDiagnosisConsoleLine(
+                policy = policy,
+                tabId = observation.tabId,
+                level = ConsoleLevel.ERROR,
+                message = "HTTP ${observation.statusCode} on the main document ${observation.url}" +
+                    (observation.reasonPhrase?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "") +
+                    ". The server rejected the navigation, so the page's own JavaScript and console " +
+                    "output may never have started.",
+            )
+        }
+
         val key = keyFor(observation.url, observation.method, policy)
 
         // Fill in an existing row whenever possible: the same failure can reach us twice (once as a
@@ -251,6 +302,53 @@ class LiveNetworkObserver(
                 policy,
                 notes = listOf(InspectorExplanations.ORPHAN_RESPONSE),
             ).copy(response = mergeHttpError(null, observation, policy))
+        )
+    }
+
+    override fun onSslError(observation: SslErrorObservation) {
+        val policy = capturePolicy()
+        if (!policy.enabled) return
+        recordAppDiagnosis(
+            policy = policy,
+            tabId = observation.tabId,
+            url = observation.url,
+            method = UNKNOWN_METHOD,
+            // WebView does not say which frame the handshake belonged to, so this stays unknown
+            // rather than being guessed at "main frame".
+            isForMainFrame = observation.isForMainFrame,
+            description = buildString {
+                append("TLS/SSL error: ")
+                append(observation.description)
+                observation.primaryError?.let { append(" (SslError primaryError=$it)") }
+                append(". WebView cancelled the load, so no response was ever delivered.")
+            },
+            note = InspectorExplanations.SSL_ERROR_CANCELLED,
+            observedAtMillis = observation.observedAtMillis,
+        )
+    }
+
+    override fun onDocumentLoadTimeout(tabId: String, url: String?, elapsedMillis: Long) {
+        val policy = capturePolicy()
+        if (!policy.enabled) return
+        val note = InspectorExplanations.documentLoadTimeout(elapsedMillis)
+        // Invent no response: the document may still be loading and may still succeed, and marking
+        // its rows FAILED would be a lie. Annotate what is waiting, and say it once in the console,
+        // which is the first place a reader looks when a page appears to have hung.
+        store.updateEntriesForTab(tabId) { entry ->
+            if (entry.state == EntryState.PENDING) {
+                entry.copy(notes = appendNote(entry.notes, note))
+            } else {
+                entry
+            }
+        }
+        addDiagnosisConsoleLine(
+            policy = policy,
+            tabId = tabId,
+            level = ConsoleLevel.WARN,
+            message = "Load watchdog: ${url ?: "the document"} had not finished loading " +
+                "${elapsedMillis / 1000} s after it started. WebView reported no page-finished, no " +
+                "error and no HTTP status for it. The server may be overloaded or the renderer " +
+                "stalled; the load has not been cancelled and may still complete.",
         )
     }
 
@@ -454,6 +552,120 @@ class LiveNetworkObserver(
     }
 
     // ------------------------------------------------------------------------------ entry building
+
+    /**
+     * Stores a failure the **app** witnessed rather than the page: a dead renderer, a refused TLS
+     * handshake, a stalled document.
+     *
+     * These are exactly the events that used to leave the inspector empty, because the page that
+     * would normally report them is dead, never loaded, or still hanging — so no console line and no
+     * response callback can ever arrive. Each one becomes a FAILED network row plus a console line,
+     * so an exported session always states what happened instead of looking as though nothing did.
+     */
+    private fun recordAppDiagnosis(
+        policy: CapturePolicy,
+        tabId: String,
+        url: String,
+        method: String,
+        isForMainFrame: Boolean?,
+        description: String,
+        note: String?,
+        observedAtMillis: Long,
+    ) {
+        val now = System.currentTimeMillis()
+        if (!messageBudget.allow(now)) {
+            droppedByRate.incrementAndGet()
+            return
+        }
+        // A dead renderer often cannot report its URL any more. Fall back to the newest main-frame
+        // document the inspector saw for this tab rather than storing a row with a blank URL.
+        val resolvedUrl = url.ifBlank { store.latestDocumentUrl(tabId) ?: "(URL not reported)" }
+        val entryId = store.allocateEntryId()
+        val request = RequestObservation(
+            tabId = tabId,
+            url = resolvedUrl,
+            method = method,
+            observedAtMillis = observedAtMillis,
+            timeSource = EvidenceSource.APP_CLOCK,
+            isForMainFrame = isForMainFrame,
+            isRedirect = null,
+            hasGesture = null,
+            headers = emptyMap(),
+            headersReport = HeadersReport.UNKNOWN,
+            initiator = if (isForMainFrame == true) {
+                Initiator.DOCUMENT_NAVIGATION
+            } else {
+                Initiator.RESOURCE_LOAD
+            },
+            observedVia = EvidenceSource.WEBVIEW_CALLBACK,
+        )
+        store.addEntry(
+            buildEntry(
+                entryId,
+                request,
+                policy,
+                notes = listOfNotNull(note, InspectorExplanations.APP_OBSERVED_FAILURE),
+            ).copy(
+                response = withFailure(
+                    null,
+                    FailureObservation(
+                        tabId = tabId,
+                        url = resolvedUrl,
+                        description = description,
+                        errorCode = null,
+                        isForMainFrame = isForMainFrame == true,
+                        method = method,
+                        observedAtMillis = observedAtMillis,
+                    ),
+                ),
+                state = EntryState.FAILED,
+            )
+        )
+        addDiagnosisConsoleLine(policy, tabId, ConsoleLevel.ERROR, description)
+    }
+
+    /**
+     * Adds one console line the *app* generated, tagged [EvidenceSource.DERIVED] so it can never be
+     * mistaken for output the page itself produced.
+     *
+     * Gated on the same console switch and rate budget as real console messages: with "JavaScript
+     * console" switched off the user asked for no console rows, and the network entry still carries
+     * the failure. Identical consecutive lines collapse in [NetworkLogStore.addConsole], so one
+     * failure reported through two channels does not become two rows.
+     */
+    private fun addDiagnosisConsoleLine(
+        policy: CapturePolicy,
+        tabId: String,
+        level: ConsoleLevel,
+        message: String,
+    ) {
+        if (!policy.captureConsole) return
+        val now = System.currentTimeMillis()
+        if (!consoleBudget.allow(now)) {
+            droppedByRate.incrementAndGet()
+            return
+        }
+        val scrubbed = Redaction.scrubText(
+            message,
+            InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS,
+            policy.revealSensitiveValues,
+        )
+        store.addConsole(
+            ConsoleEntry(
+                id = store.allocateConsoleId(),
+                tabId = tabId,
+                level = level,
+                message = scrubbed.text,
+                masked = scrubbed.masked,
+                source = null,
+                lineNumber = null,
+                timestampMillis = now,
+                stackTrace = null,
+                evidence = EvidenceSource.DERIVED,
+            )
+        )
+        consoleMessagesSinceCheck.incrementAndGet()
+    }
 
     private fun buildEntry(
         id: Long,

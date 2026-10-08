@@ -14,6 +14,12 @@ sealed class InspectorMessage {
     data class ResponseReceived(val observation: ResponseObservation) : InspectorMessage()
     data class RequestFailed(val observation: FailureObservation) : InspectorMessage()
     data class HttpError(val observation: HttpErrorObservation) : InspectorMessage()
+    data class SslError(val observation: SslErrorObservation) : InspectorMessage()
+    data class DocumentLoadTimeout(
+        val tabId: String,
+        val url: String?,
+        val elapsedMillis: Long,
+    ) : InspectorMessage()
     data class AuthChallenge(val observation: AuthObservation) : InspectorMessage()
     data class PageRecords(val tabId: String, val json: String) : InspectorMessage()
     data class Console(

@@ -81,6 +81,12 @@ class InspectorController(
             is InspectorMessage.ResponseReceived -> liveObserver.onResponseReceived(message.observation)
             is InspectorMessage.RequestFailed -> liveObserver.onRequestFailed(message.observation)
             is InspectorMessage.HttpError -> liveObserver.onHttpError(message.observation)
+            is InspectorMessage.SslError -> liveObserver.onSslError(message.observation)
+            is InspectorMessage.DocumentLoadTimeout -> liveObserver.onDocumentLoadTimeout(
+                tabId = message.tabId,
+                url = message.url,
+                elapsedMillis = message.elapsedMillis,
+            )
             is InspectorMessage.AuthChallenge -> liveObserver.onAuthenticationRequest(message.observation)
             is InspectorMessage.PageRecords -> liveObserver.onPageRecords(message.tabId, message.json)
             is InspectorMessage.Console -> liveObserver.onConsoleMessage(

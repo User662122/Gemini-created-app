@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -64,7 +65,7 @@ fun BrowserScreen(
     var findTriggerNext by remember { mutableLongStateOf(0L) }
     var findTriggerPrev by remember { mutableLongStateOf(0L) }
     var isNetworkInspectorOpen by remember { mutableStateOf(false) }
-    val automationSnackbarHostState = remember { SnackbarHostState() }
+    val statusSnackbarHostState = remember { SnackbarHostState() }
 
     // The inspector's publishing ticker only runs while its screens are on screen, so browsing with
     // the inspector closed costs nothing extra.
@@ -85,7 +86,17 @@ fun BrowserScreen(
     LaunchedEffect(uiState.automationStatus, uiState.isRecordingAutomation, uiState.automationPlayback) {
         val status = uiState.automationStatus
         if (!status.isNullOrBlank() && !uiState.isRecordingAutomation && uiState.automationPlayback == null) {
-            automationSnackbarHostState.showSnackbar(status)
+            statusSnackbarHostState.showSnackbar(status)
+        }
+    }
+
+    // Keyed on the token, not the message: a failure that repeats with identical wording (a renderer
+    // killed twice) must still be announced twice, and a later state change must not cut short a
+    // diagnostic the user has not read yet. Long duration because these explain a blank screen.
+    LaunchedEffect(uiState.pageStatusToken) {
+        val message = uiState.pageStatus
+        if (uiState.pageStatusToken > 0L && !message.isNullOrBlank()) {
+            statusSnackbarHostState.showSnackbar(message, duration = SnackbarDuration.Long)
         }
     }
 
@@ -125,7 +136,7 @@ fun BrowserScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("browser_main_scaffold"),
-        snackbarHost = { SnackbarHost(automationSnackbarHostState) },
+        snackbarHost = { SnackbarHost(statusSnackbarHostState) },
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { paddingValues ->
         val screenBg = if (isIncognito) IncognitoBg else MaterialTheme.colorScheme.background
@@ -243,6 +254,7 @@ fun BrowserScreen(
                                 onPageStarted = { id, url -> viewModel.onPageStarted(id, url) },
                                 onPageFinished = { id, url, title -> viewModel.onPageFinished(id, url, title) },
                                 onProgressChanged = { id, progress -> viewModel.onProgressChanged(id, progress) },
+                                onPageEvent = { id, message -> viewModel.onPageEvent(id, message) },
                                 onNavigationStateChanged = { id, canBack, canForward ->
                                     viewModel.onNavigationStateChanged(id, canBack, canForward)
                                 },

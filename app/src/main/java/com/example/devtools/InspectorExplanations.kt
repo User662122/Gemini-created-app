@@ -56,6 +56,33 @@ object InspectorExplanations {
         "The WebView renderer process was killed. Requests that were still in flight can never be " +
             "completed, so their responses cannot be observed."
 
+    /**
+     * Renderer deaths, refused TLS handshakes and stalled documents are the three failures that used
+     * to leave the inspector completely empty: the page that would normally log the error is dead,
+     * never loaded, or still hanging, so nothing reaches `onConsoleMessage` and no response callback
+     * ever arrives. Each of them is now recorded here by the app itself, which is the only witness
+     * left. These strings say so explicitly, so a reader never mistakes "the app captured nothing"
+     * for "nothing happened".
+     */
+    const val APP_OBSERVED_FAILURE =
+        "Recorded by the app, not by the page: WebView reported this failure through a callback, and " +
+            "the page itself produced no console output and no response for it. When the Console tab " +
+            "is otherwise empty, a row like this is the reason."
+
+    const val SSL_ERROR_CANCELLED =
+        "WebView refused the TLS certificate and the load was cancelled, so no response was ever " +
+            "delivered to the app. The app does not override this decision and never calls " +
+            "SslErrorHandler.proceed(): accepting a bad certificate would expose the session. The " +
+            "usual causes are an expired or mismatched certificate, a captive portal or proxy " +
+            "re-signing HTTPS, or a device clock that is wrong."
+
+    /** Note attached to rows that were still waiting when the load watchdog fired. */
+    fun documentLoadTimeout(elapsedMillis: Long): String =
+        "The document had still not finished loading ${elapsedMillis / 1000} s after it started, and " +
+            "WebView had reported no page-finished, no error and no HTTP status for it. It may still " +
+            "be loading: the app does not cancel it. This is what an overloaded or very slow server " +
+            "looks like from here."
+
     const val REQUEST_HEADERS_SUBSET =
         "These headers are the subset WebView chooses to expose. WebView's own documentation make no " +
             "completeness promise; headers added lower in the network stack (cookies, User-Agent " +
@@ -151,6 +178,7 @@ object InspectorExplanations {
         "Cookie scope (domain/path/flags/expiry) for cookies the app can see" to true,
         "Cookie scope read back from Set-Cookie for the page's own fetch/XHR" to true,
         "console.log/warn/error and uncaught JavaScript errors" to true,
+        "Renderer death, refused TLS certificates and stalled loads, reported by the app itself" to true,
         "Top-level status line for 2xx/3xx responses the app does not intercept" to false,
         "Response bodies of resources the app does not fetch itself" to false,
         "Complete header sets (the platform decides what to expose)" to false,
