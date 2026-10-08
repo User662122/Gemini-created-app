@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "name": "Browser Bridge",
+  "version": "1.0",
+  "description": "Connects this browser's pages to the app itself: automation recording, automation playback and uncaught page errors.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browserbridge@example.com"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons"
+  ]
+}

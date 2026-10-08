@@ -14,7 +14,9 @@ android {
 
   defaultConfig {
     applicationId = "com.aistudio.chromebrowser.vktpnx"
-    minSdk = 24
+    // GeckoView requires Android 8.0 (API 26). The previous WebView-based engine ran on API 24;
+    // see docs/ENGINE_MIGRATION.md ("Compatibility") for why the floor moved.
+    minSdk = 26
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
@@ -80,6 +82,11 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  // The browsing engine. GeckoView packages Mozilla's Gecko (rendering/layout), SpiderMonkey
+  // (JavaScript) and Gecko's own networking/storage stack as an Android library. It replaces
+  // android.webkit.WebView as the engine while the browser UI stays app-owned. See
+  // docs/ENGINE_MIGRATION.md.
+  implementation(libs.geckoview)
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)

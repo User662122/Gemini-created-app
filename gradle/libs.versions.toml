@@ -40,6 +40,9 @@ secretsGradlePlugin = "2.0.1"
 googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
+# GeckoView: Mozilla's Gecko engine + SpiderMonkey JS engine, published as an AAR.
+# Version scheme is <major>.<minor>.<timestamp>; see docs/ENGINE_MIGRATION.md for how to bump it.
+geckoview = "157.0.20261005135250"
 
 
 [libraries]
@@ -94,6 +97,7 @@ firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
 androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
+geckoview = { group = "org.mozilla.geckoview", name = "geckoview", version.ref = "geckoview" }
 
 
 [plugins]

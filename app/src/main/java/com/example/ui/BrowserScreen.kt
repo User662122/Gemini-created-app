@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,14 +41,26 @@ import com.example.ui.components.BookmarksDialog
 import com.example.ui.components.ChromeOmniboxSheet
 import com.example.ui.components.ChromeOverflowMenu
 import com.example.ui.components.ChromeTopBar
+import com.example.ui.components.DownloadsDialog
+import com.example.ui.components.EnginePromptDialogs
 import com.example.ui.components.FindInPageBar
 import com.example.ui.components.HistoryDialog
 import com.example.ui.components.NewTabPage
 import com.example.ui.components.SettingsDialog
 import com.example.ui.components.TabSwitcherSheet
 import com.example.ui.components.WebViewContainer
+import com.example.ui.engine.BrowserDataCleaner
+import com.example.ui.engine.BrowserEngineKind
+import com.example.ui.engine.gecko.GeckoBrowserSurface
+import com.example.ui.engine.gecko.GeckoEngine
+import com.example.ui.engine.gecko.GeckoPromptRequest
+import com.example.ui.engine.gecko.GeckoRuntimeManager
+import com.example.ui.engine.gecko.PromptAnswer
 import com.example.ui.theme.ChromeDarkBg
 import com.example.ui.theme.IncognitoBg
+import com.example.devtools.ConsoleLevel
+import com.example.devtools.FailureObservation
+import com.example.devtools.InspectorMessage
 import com.example.devtools.InspectorRuntime
 import com.example.devtools.ui.NetworkInspectorScreen
 
@@ -69,6 +83,110 @@ fun BrowserScreen(
     var isNetworkInspectorOpen by remember { mutableStateOf(false) }
     val statusSnackbarHostState = remember { SnackbarHostState() }
 
+    val engineKind by viewModel.engineKind.collectAsStateWithLifecycle()
+    val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+
+    // The embedded Gecko engine. Constructed eagerly but inert until `start()` is called, so
+    // choosing the system engine costs nothing and the bridge/prompt plumbing always has a home.
+    val geckoEngine = remember {
+        GeckoEngine(
+            context = context.applicationContext,
+            registry = viewModel.downloadRegistry,
+            onDownloadStatus = { viewModel.onDownloadStatus(it) },
+            onExternalApp = { uri -> openExternally(context, uri) },
+            onRecordedStep = { tabId, step -> viewModel.onAutomationStepRecorded(tabId, step) },
+            onPageError = { tabId, message, source, line ->
+                inspector.dispatch(
+                    InspectorMessage.Console(
+                        tabId = tabId,
+                        level = ConsoleLevel.ERROR,
+                        message = message,
+                        source = source,
+                        lineNumber = line,
+                    )
+                )
+            },
+            onPageStarted = { tabId, url ->
+                viewModel.onPageStarted(tabId, url)
+                inspector.dispatch(InspectorMessage.DocumentStarted(tabId))
+            },
+            onUrlChanged = { tabId, url -> viewModel.onLocationChanged(tabId, url) },
+            onPageFinished = { tabId, url, title ->
+                viewModel.onPageFinished(tabId, url, title)
+                inspector.dispatch(InspectorMessage.DocumentFinished(tabId, url, title))
+            },
+            onProgressChanged = { tabId, progress -> viewModel.onProgressChanged(tabId, progress) },
+            onPageEvent = { tabId, message -> viewModel.onPageEvent(tabId, message) },
+            onNavigationStateChanged = { tabId, canGoBack, canGoForward ->
+                viewModel.onNavigationStateChanged(tabId, canGoBack, canGoForward)
+            },
+            onNewTab = { url -> viewModel.openTabForPopup(url) },
+            onCloseTab = { tabId -> viewModel.closeTabById(tabId) },
+            // Gecko's own report of why a load failed is strictly more specific than WebView's, so
+            // the developer inspector keeps recording failures under this engine too.
+            onLoadFailure = { tabId, url, description, errorCode ->
+                inspector.observer.onRequestFailed(
+                    FailureObservation(
+                        tabId = tabId,
+                        url = url ?: uiState.currentTab?.url.orEmpty(),
+                        description = description,
+                        errorCode = errorCode,
+                        isForMainFrame = true,
+                        method = "GET",
+                        observedAtMillis = System.currentTimeMillis(),
+                    )
+                )
+            },
+        )
+    }
+
+    val geckoPromptRequests by geckoEngine.promptHost.requests.collectAsStateWithLifecycle()
+
+    var pendingFileRequest by remember { mutableStateOf<GeckoPromptRequest.FileChooser?>(null) }
+    var pendingPermissionRequest by remember { mutableStateOf<GeckoPromptRequest.AndroidPermissions?>(null) }
+
+    // File uploads. SAF needs no storage permission, and GeckoView accepts the content URIs the
+    // picker returns — the documented path for <input type="file"> in an embedded Gecko.
+    val pickSingleFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val request = pendingFileRequest
+        pendingFileRequest = null
+        if (request != null) {
+            geckoEngine.promptHost.resolve(
+                request.id,
+                if (uri == null) PromptAnswer.Dismiss else PromptAnswer.Files(listOf(uri))
+            )
+        }
+    }
+
+    val pickMultipleFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val request = pendingFileRequest
+        pendingFileRequest = null
+        if (request != null) {
+            geckoEngine.promptHost.resolve(
+                request.id,
+                if (uris.isEmpty()) PromptAnswer.Dismiss else PromptAnswer.Files(uris)
+            )
+        }
+    }
+
+    // Android runtime permissions a page asked for (camera, microphone, location). The system prompt
+    // is the only place these can be granted; the engine is told the outcome either way.
+    val requestAndroidPermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val request = pendingPermissionRequest
+        pendingPermissionRequest = null
+        if (request != null) {
+            val granted = results.isNotEmpty() && results.values.all { it }
+            geckoEngine.promptHost.resolve(
+                request.id,
+                if (granted) PromptAnswer.Allow else PromptAnswer.Deny
+            )
+        }
+    }
+
     // The inspector's publishing ticker only runs while its screens are on screen, so browsing with
     // the inspector closed costs nothing extra.
     LaunchedEffect(isNetworkInspectorOpen) {
@@ -84,6 +202,11 @@ fun BrowserScreen(
     LaunchedEffect(Unit) {
         inspector.attachCookieScopeProvider(viewModel.cookieScopeProvider)
     }
+
+    // The embedded engine is started once the screen exists, and keeps a session for exactly the
+    // tabs that are open. Starting it here rather than in the ViewModel keeps the engine's lifecycle
+    // tied to what is on screen.
+    ManageTabSessions(viewModel = viewModel, engine = geckoEngine)
 
     LaunchedEffect(uiState.automationStatus, uiState.isRecordingAutomation, uiState.automationPlayback) {
         val status = uiState.automationStatus
@@ -204,6 +327,7 @@ fun BrowserScreen(
                             }
                         },
                         onFindInPage = { viewModel.setFindInPageVisible(true) },
+                        onDownloads = { viewModel.setDownloadsVisible(true) },
                         onToggleDesktopSite = { viewModel.toggleDesktopSite() },
                         onSettings = { viewModel.setSettingsVisible(true) },
                         onReload = { viewModel.reloadCurrentTab() },
@@ -248,37 +372,62 @@ fun BrowserScreen(
                         )
                     } else {
                         key(currentTab.id) {
-                            WebViewContainer(
-                                tab = currentTab,
-                                isJavaScriptEnabled = uiState.isJavaScriptEnabled,
-                                reloadTrigger = uiState.reloadTrigger,
-                                navigateBackTrigger = uiState.navigateBackTrigger,
-                                navigateForwardTrigger = uiState.navigateForwardTrigger,
-                                findQuery = if (uiState.isFindInPageOpen) uiState.findQuery else "",
-                                findTriggerNext = findTriggerNext,
-                                findTriggerPrev = findTriggerPrev,
-                                isRecordingAutomation = uiState.isRecordingAutomation &&
-                                    currentTab.id == uiState.recordingAutomationTabId,
-                                automationPlayback = uiState.automationPlayback,
-                                inspector = inspector,
-                                inspectorScriptToken = inspectorState.scriptToken,
-                                onAutomationStepRecorded = { tabId, step ->
-                                    viewModel.onAutomationStepRecorded(tabId, step)
-                                },
-                                onAutomationPlaybackFinished = { runId, result ->
-                                    viewModel.onAutomationPlaybackFinished(runId, result)
-                                },
-                                onPageStarted = { id, url -> viewModel.onPageStarted(id, url) },
-                                onPageFinished = { id, url, title -> viewModel.onPageFinished(id, url, title) },
-                                onProgressChanged = { id, progress -> viewModel.onProgressChanged(id, progress) },
-                                onPageEvent = { id, message -> viewModel.onPageEvent(id, message) },
-                                onNavigationStateChanged = { id, canBack, canForward ->
-                                    viewModel.onNavigationStateChanged(id, canBack, canForward)
-                                },
-                                onFindMatchesChanged = { idx, total ->
-                                    viewModel.updateFindMatches(idx, total)
-                                }
-                            )
+                            if (engineKind == BrowserEngineKind.GECKO) {
+                                GeckoBrowserSurface(
+                                    engine = geckoEngine,
+                                    tab = currentTab,
+                                    isJavaScriptEnabled = uiState.isJavaScriptEnabled,
+                                    reloadTrigger = uiState.reloadTrigger,
+                                    navigateBackTrigger = uiState.navigateBackTrigger,
+                                    navigateForwardTrigger = uiState.navigateForwardTrigger,
+                                    findQuery = if (uiState.isFindInPageOpen) uiState.findQuery else "",
+                                    findTriggerNext = findTriggerNext,
+                                    findTriggerPrev = findTriggerPrev,
+                                    isRecordingAutomation = uiState.isRecordingAutomation &&
+                                        currentTab.id == uiState.recordingAutomationTabId,
+                                    automationPlayback = uiState.automationPlayback,
+                                    inspector = inspector,
+                                    onAutomationPlaybackFinished = { runId, result ->
+                                        viewModel.onAutomationPlaybackFinished(runId, result)
+                                    },
+                                    onPageEvent = { id, message -> viewModel.onPageEvent(id, message) },
+                                    onFindMatchesChanged = { idx, total ->
+                                        viewModel.updateFindMatches(idx, total)
+                                    }
+                                )
+                            } else {
+                                WebViewContainer(
+                                    tab = currentTab,
+                                    isJavaScriptEnabled = uiState.isJavaScriptEnabled,
+                                    reloadTrigger = uiState.reloadTrigger,
+                                    navigateBackTrigger = uiState.navigateBackTrigger,
+                                    navigateForwardTrigger = uiState.navigateForwardTrigger,
+                                    findQuery = if (uiState.isFindInPageOpen) uiState.findQuery else "",
+                                    findTriggerNext = findTriggerNext,
+                                    findTriggerPrev = findTriggerPrev,
+                                    isRecordingAutomation = uiState.isRecordingAutomation &&
+                                        currentTab.id == uiState.recordingAutomationTabId,
+                                    automationPlayback = uiState.automationPlayback,
+                                    inspector = inspector,
+                                    inspectorScriptToken = inspectorState.scriptToken,
+                                    onAutomationStepRecorded = { tabId, step ->
+                                        viewModel.onAutomationStepRecorded(tabId, step)
+                                    },
+                                    onAutomationPlaybackFinished = { runId, result ->
+                                        viewModel.onAutomationPlaybackFinished(runId, result)
+                                    },
+                                    onPageStarted = { id, url -> viewModel.onPageStarted(id, url) },
+                                    onPageFinished = { id, url, title -> viewModel.onPageFinished(id, url, title) },
+                                    onProgressChanged = { id, progress -> viewModel.onProgressChanged(id, progress) },
+                                    onPageEvent = { id, message -> viewModel.onPageEvent(id, message) },
+                                    onNavigationStateChanged = { id, canBack, canForward ->
+                                        viewModel.onNavigationStateChanged(id, canBack, canForward)
+                                    },
+                                    onFindMatchesChanged = { idx, total ->
+                                        viewModel.updateFindMatches(idx, total)
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -343,10 +492,19 @@ fun BrowserScreen(
                     selectedEngine = uiState.selectedSearchEngine,
                     isJavaScriptEnabled = uiState.isJavaScriptEnabled,
                     isDesktopDefault = uiState.isDesktopSiteDefault,
+                    engineKind = engineKind,
                     onSelectEngine = { viewModel.setSearchEngine(it) },
                     onToggleJavaScript = { viewModel.setJavaScriptEnabled(it) },
                     onToggleDesktopDefault = { viewModel.setDesktopSiteDefault(it) },
-                    onClearData = { viewModel.clearBrowsingData() },
+                    onSelectBrowserEngine = { viewModel.setEngineKind(it) },
+                    onClearData = {
+                        // Clearing data must clear the engine's store too, not just this app's
+                        // history table: cookies and site storage lived on regardless before.
+                        viewModel.clearBrowsingData()
+                        BrowserDataCleaner.clear(context, engineKind) { message ->
+                            viewModel.onDownloadStatus(message)
+                        }
+                    },
                     onDismiss = { viewModel.setSettingsVisible(false) }
                 )
             }
@@ -388,6 +546,110 @@ fun BrowserScreen(
                     onDismiss = { viewModel.setAutomationsVisible(false) }
                 )
             }
+
+            if (uiState.isDownloadsOpen) {
+                DownloadsDialog(
+                    downloads = downloads,
+                    onOpen = { entry ->
+                        entry.contentUri?.let { uri -> openExternally(context, Uri.parse(uri)) }
+                    },
+                    onRemove = { viewModel.removeDownload(it.id) },
+                    onClearAll = { viewModel.clearDownloads() },
+                    onDismiss = { viewModel.setDownloadsVisible(false) }
+                )
+            }
+
+            // Page-raised dialogs: alert/confirm/prompt, HTTP authentication, permission requests,
+            // select/date pickers. The WebView engine showed these itself; an embedded engine does
+            // not, so the app has to.
+            EnginePromptDialogs(
+                requests = geckoPromptRequests,
+                onResolve = { id, answer -> geckoEngine.promptHost.resolve(id, answer) }
+            )
+
+            // Keeping the two requests that need activity launchers out of the composable above.
+            LaunchedEffect(geckoPromptRequests) {
+                geckoPromptRequests.forEach { request ->
+                    when (request) {
+                        is GeckoPromptRequest.FileChooser ->
+                            if (pendingFileRequest?.id != request.id) {
+                                pendingFileRequest = request
+                                if (request.multiple) {
+                                    pickMultipleFiles.launch(arrayOf("*/*"))
+                                } else {
+                                    pickSingleFile.launch(
+                                        request.mimeTypes.firstOrNull()?.toMimeType() ?: "*/*"
+                                    )
+                                }
+                            }
+
+                        is GeckoPromptRequest.AndroidPermissions ->
+                            if (pendingPermissionRequest?.id != request.id) {
+                                pendingPermissionRequest = request
+                                requestAndroidPermissions.launch(request.permissions.toTypedArray())
+                            }
+
+                        else -> Unit
+                    }
+                }
+            }
+
+            // Downloads and page errors have no dialog of their own; they surface as snackbars, the
+            // same way page status already does.
+            LaunchedEffect(uiState.downloadStatusToken) {
+                uiState.downloadStatus?.let { statusSnackbarHostState.showSnackbar(it) }
+            }
         }
     }
 }
+
+/**
+ * The Gecko session must outlive the composition of a tab's surface, and must be told which tabs are
+ * still open, so the engine can release the ones that are gone.
+ */
+@Composable
+private fun ManageTabSessions(viewModel: BrowserViewModel, engine: GeckoEngine) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val javascriptEnabled = uiState.isJavaScriptEnabled
+    val liveTabIds = remember(uiState.regularTabs, uiState.incognitoTabs) {
+        (uiState.regularTabs.map { it.id } + uiState.incognitoTabs.map { it.id }).toSet()
+    }
+
+    LaunchedEffect(Unit) {
+        engine.start()
+        GeckoRuntimeManager.ensureBridgeExtension()
+    }
+
+    // The extension installs asynchronously, and a session can only be given its message delegate
+    // once it exists, so every open session is re-registered when the extension arrives.
+    val bridgeExtension by GeckoRuntimeManager.bridgeExtension.collectAsStateWithLifecycle()
+    LaunchedEffect(bridgeExtension) {
+        if (bridgeExtension != null) engine.attachBridgeToOpenSessions()
+    }
+
+    // JavaScript is a session setting, so it must be pushed into sessions that already exist.
+    LaunchedEffect(javascriptEnabled) { engine.setJavaScriptEnabled(javascriptEnabled) }
+
+    DisposableEffect(liveTabIds) {
+        engine.keepSessionsFor(liveTabIds)
+        onDispose { }
+    }
+}
+
+private fun openExternally(context: Context, uri: Uri) {
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/octet-stream")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        )
+    }
+}
+
+/** `accept="image/*"` is already a MIME type; extensions such as `.pdf` are not. */
+private fun String.toMimeType(): String =
+    if (contains("/")) this else android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+        trim().removePrefix(".")
+    ) ?: "*/*"
+

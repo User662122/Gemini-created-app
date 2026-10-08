@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import android.webkit.URLUtil
 import androidx.lifecycle.AndroidViewModel
@@ -8,13 +9,16 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.BrowserAutomationStore
 import com.example.data.BrowserDatabase
 import com.example.data.BrowserRepository
+import com.example.data.DownloadRegistry
 import com.example.data.model.AutomationPlayback
 import com.example.data.model.AutomationStep
 import com.example.data.model.Bookmark
 import com.example.data.model.BrowserAutomation
 import com.example.data.model.BrowserTab
+import com.example.data.model.DownloadEntry
 import com.example.data.model.HistoryItem
 import com.example.devtools.CookieScopeProvider
+import com.example.ui.engine.BrowserEngineKind
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -82,7 +86,11 @@ data class BrowserUiState(
      * Increments per page event so an identical failure twice in a row is still announced twice —
      * a renderer killed repeatedly is the case that most needs to be visible.
      */
-    val pageStatusToken: Long = 0L
+    val pageStatusToken: Long = 0L,
+    val isDownloadsOpen: Boolean = false,
+    /** The last word about a download, good or bad. */
+    val downloadStatus: String? = null,
+    val downloadStatusToken: Long = 0L
 ) {
     val currentTab: BrowserTab?
         get() {
@@ -101,6 +109,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private val repository: BrowserRepository
     private val automationStore = BrowserAutomationStore(application)
+
+    /**
+     * Which engine renders pages. Gecko (an embedded Gecko/SpiderMonkey engine) is the default; the
+     * system WebView engine stays selectable while the replacement proves itself on real sites.
+     * See docs/ENGINE_MIGRATION.md.
+     */
+    private val enginePreferences =
+        application.getSharedPreferences("browser_engine", Context.MODE_PRIVATE)
+
+    private val _engineKind = MutableStateFlow(BrowserEngineKind.fromStorage(enginePreferences.getString("kind", null)))
+    val engineKind: StateFlow<BrowserEngineKind> = _engineKind.asStateFlow()
+
+    /** Where downloads are recorded. Owned here so the list survives tab and screen changes. */
+    val downloadRegistry = DownloadRegistry(application)
+    val downloads: StateFlow<List<DownloadEntry>> = downloadRegistry.downloads
     private var lastAutomationStepAt = 0L
     private var nextAutomationRunId = 0L
 
@@ -698,6 +721,55 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.clearAllHistory()
         }
+    }
+
+    fun setEngineKind(kind: BrowserEngineKind) {
+        enginePreferences.edit().putString("kind", kind.storageValue).apply()
+        _engineKind.value = kind
+    }
+
+    /**
+     * A URL change that is not a new document: a redirect, a fragment, a history entry pushed by the
+     * page. The tab's address and loading state are updated without inventing a second history visit.
+     */
+    fun onLocationChanged(tabId: String, url: String) {
+        updateTabState(tabId) { it.copy(url = url) }
+    }
+
+    /**
+     * Opens a tab for a page that asked for a new window (`target="_blank"`, `window.open`) and
+     * returns its id, so the engine can hand the new session straight to it.
+     */
+    fun openTabForPopup(url: String): String {
+        openNewTab(url = url, isIncognito = _uiState.value.isIncognitoViewActive)
+        return _uiState.value.currentTab?.id ?: ""
+    }
+
+    /** A page's own `window.close()`. */
+    fun closeTabById(tabId: String) {
+        val state = _uiState.value
+        val isIncognito = state.incognitoTabs.any { it.id == tabId }
+        if (!isIncognito && state.regularTabs.none { it.id == tabId }) return
+        closeTab(tabId, isIncognito)
+    }
+
+    fun setDownloadsVisible(visible: Boolean) {
+        _uiState.update { it.copy(isDownloadsOpen = visible) }
+    }
+
+    fun onDownloadStatus(message: String) {
+        if (message.isBlank()) return
+        _uiState.update {
+            it.copy(downloadStatus = message, downloadStatusToken = it.downloadStatusToken + 1L)
+        }
+    }
+
+    fun removeDownload(id: String) {
+        downloadRegistry.remove(id)
+    }
+
+    fun clearDownloads() {
+        downloadRegistry.clear()
     }
 
     fun setBookmarksVisible(visible: Boolean) {

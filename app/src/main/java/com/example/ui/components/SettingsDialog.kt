@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.SearchEngine
+import com.example.ui.engine.BrowserEngineKind
 import com.example.ui.theme.ChromeBlue
 import com.example.ui.theme.ChromeRed
 
@@ -57,15 +59,18 @@ fun SettingsDialog(
     selectedEngine: SearchEngine,
     isJavaScriptEnabled: Boolean,
     isDesktopDefault: Boolean,
+    engineKind: BrowserEngineKind,
     onSelectEngine: (SearchEngine) -> Unit,
     onToggleJavaScript: (Boolean) -> Unit,
     onToggleDesktopDefault: (Boolean) -> Unit,
+    onSelectBrowserEngine: (BrowserEngineKind) -> Unit,
     onClearData: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showSearchEngineDialog by remember { mutableStateOf(false) }
     var showClearDataConfirm by remember { mutableStateOf(false) }
+    var showEngineDialog by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier
@@ -134,6 +139,28 @@ fun SettingsDialog(
                 subtitle = "Allow sites to run JavaScript",
                 checked = isJavaScriptEnabled,
                 onCheckedChange = onToggleJavaScript
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Section: Browser engine
+            SectionHeader(title = "Browser engine")
+
+            SettingsRow(
+                icon = Icons.Default.Language,
+                title = "Rendering engine",
+                subtitle = engineKind.displayName,
+                onClick = { showEngineDialog = true }
+            )
+
+            Text(
+                text = "Gecko is this app's own engine: Gecko renders the page, SpiderMonkey runs " +
+                    "JavaScript, and Gecko's network and storage stacks handle cookies, site storage " +
+                    "and HTTPS. The system engine is Android's WebView, which is also Chromium but " +
+                    "belongs to the operating system rather than to this app.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
 
             Spacer(modifier = Modifier.height(24.dp))

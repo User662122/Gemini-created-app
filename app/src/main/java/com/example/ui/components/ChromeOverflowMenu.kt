@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
@@ -62,6 +63,7 @@ fun ChromeOverflowMenu(
     onNewIncognitoTab: () -> Unit,
     onHistory: () -> Unit,
     onBookmarks: () -> Unit,
+    onDownloads: () -> Unit,
     onShare: () -> Unit,
     onFindInPage: () -> Unit,
     onToggleDesktopSite: () -> Unit,
@@ -227,6 +229,23 @@ fun ChromeOverflowMenu(
                 onDismissRequest()
             },
             modifier = Modifier.testTag("menu_bookmarks")
+        )
+
+        // Downloads
+        DropdownMenuItem(
+            text = { Text("Downloads", fontSize = 14.sp) },
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
+            onClick = {
+                onDownloads()
+                onDismissRequest()
+            },
+            modifier = Modifier.testTag("menu_downloads")
         )
 
         // Share
