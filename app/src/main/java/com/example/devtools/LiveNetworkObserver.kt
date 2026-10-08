@@ -263,6 +263,25 @@ class LiveNetworkObserver(
             if (isNewIncident(recorded)) store.recordIncident(IncidentKind.MAIN_FRAME_HTTP_ERROR)
         }
 
+        // Name the refusal when the server's own headers say an access-control layer issued it. A
+        // bare "403" in the list is where understanding goes to die: it reads as a fault, when it is
+        // a decision — and the reference the layer stamps on the response is the one thing that lets
+        // the site's owner confirm which rule fired.
+        if (observation.isForMainFrame &&
+            AccessControlRejection.isRejection(observation.statusCode, observation.headers)
+        ) {
+            val recorded = addDiagnosisConsoleLine(
+                policy = policy,
+                tabId = observation.tabId,
+                level = ConsoleLevel.ERROR,
+                message = InspectorExplanations.cdnAccessDenied(
+                    statusCode = observation.statusCode,
+                    referenceId = AccessControlRejection.referenceId(observation.headers),
+                ),
+            )
+            if (isNewIncident(recorded)) store.recordIncident(IncidentKind.CDN_ACCESS_DENIED)
+        }
+
         val key = keyFor(observation.url, observation.method, policy)
 
         // Fill in an existing row whenever possible: the same failure can reach us twice (once as a

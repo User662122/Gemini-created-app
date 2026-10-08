@@ -83,6 +83,30 @@ object InspectorExplanations {
             "be loading: the app does not cancel it. This is what an overloaded or very slow server " +
             "looks like from here."
 
+    /**
+     * Explains a refusal by the site's own access-control layer, with the server's own reference.
+     *
+     * The point of the reference is that it is quotable: it names the rule and edge node that refused
+     * the request, which nothing on the client side can see. The point of the rest of the sentence is
+     * to stop this being read as a network fault or a bug in the page — it is neither, and no amount
+     * of reloading from this client changes the server's answer.
+     */
+    fun cdnAccessDenied(statusCode: Int, referenceId: String?): String = buildString {
+        append("HTTP ")
+        append(statusCode)
+        append(": the site's CDN/access-control layer refused this client. ")
+        if (referenceId != null) {
+            append("Reference ")
+            append(referenceId)
+            append(" — quote this to the site's support; it identifies the exact rule and edge node " +
+                "that rejected the request. ")
+        }
+        append("This is the server refusing the client, not a network fault and not an error in the " +
+            "page. Rules like this are commonly armed or tightened while the site is at peak load, " +
+            "and they key on client properties, which is why another browser on the same device can " +
+            "be accepted at the same moment.")
+    }
+
     const val REQUEST_HEADERS_SUBSET =
         "These headers are the subset WebView chooses to expose. WebView's own documentation make no " +
             "completeness promise; headers added lower in the network stack (cookies, User-Agent " +

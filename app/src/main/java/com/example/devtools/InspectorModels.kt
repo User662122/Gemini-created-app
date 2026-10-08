@@ -210,6 +210,7 @@ enum class IncidentKind(val label: String) {
     MAIN_FRAME_HTTP_ERROR("main-frame HTTP error"),
     MAIN_FRAME_LOAD_FAILURE("main-frame load failure"),
     LOAD_TIMEOUT("load watchdog timeout"),
+    CDN_ACCESS_DENIED("access-control rejection by the site's CDN"),
 }
 
 /** State of the request/response pair. */

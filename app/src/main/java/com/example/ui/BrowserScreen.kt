@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -20,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,10 +95,25 @@ fun BrowserScreen(
     // Keyed on the token, not the message: a failure that repeats with identical wording (a renderer
     // killed twice) must still be announced twice, and a later state change must not cut short a
     // diagnostic the user has not read yet. Long duration because these explain a blank screen.
+    //
+    // The action is the honest escape hatch for a page the server has refused this client: hand the
+    // very same URL to a real browser instead of pretending this view can change the server's mind.
     LaunchedEffect(uiState.pageStatusToken) {
         val message = uiState.pageStatus
         if (uiState.pageStatusToken > 0L && !message.isNullOrBlank()) {
-            statusSnackbarHostState.showSnackbar(message, duration = SnackbarDuration.Long)
+            val result = statusSnackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = "Open externally",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                val url = uiState.currentTab?.url
+                if (!url.isNullOrBlank() && url != "chrome://newtab") {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    }
+                }
+            }
         }
     }
 

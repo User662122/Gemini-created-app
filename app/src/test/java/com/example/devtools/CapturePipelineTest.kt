@@ -379,6 +379,83 @@ class CapturePipelineTest {
     }
 
     @Test
+    fun `an access-control rejection is named and carries the server's reference`() {
+        val observer = newObserver()
+
+        observer.onHttpError(
+            HttpErrorObservation(
+                tabId = "tab",
+                url = "https://www.irctc.co.in/",
+                method = "GET",
+                statusCode = 403,
+                reasonPhrase = null,
+                headers = mapOf(
+                    "x-reference-error" to "18.b60e0317.1791437529.de1b38a3",
+                    "akamai-grn" to "0.84cf2e17.1791427350.a3d2ddef",
+                    "content-type" to "text/html",
+                ),
+                isForMainFrame = true,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+
+        val console = observer.store.snapshot(0L).console
+        // The status and the identity of the refusal are two different facts, so two lines.
+        assertEquals(2, console.size)
+        val named = console.first { it.message.contains("access-control layer refused") }
+        assertTrue(named.message.contains("18.b60e0317.1791437529.de1b38a3"))
+        assertEquals(
+            listOf(
+                IncidentKind.MAIN_FRAME_HTTP_ERROR to 1,
+                IncidentKind.CDN_ACCESS_DENIED to 1,
+            ),
+            observer.store.incidents(),
+        )
+    }
+
+    @Test
+    fun `a plain 403 without the layer's marks is not called a CDN rejection`() {
+        val observer = newObserver()
+
+        observer.onHttpError(
+            HttpErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/private",
+                method = "GET",
+                statusCode = 403,
+                reasonPhrase = "Forbidden",
+                headers = emptyMap(),
+                isForMainFrame = true,
+                observedAtMillis = System.currentTimeMillis(),
+            )
+        )
+
+        // An application may refuse for its own reasons; calling that a CDN decision would be a
+        // guess dressed up as a diagnosis.
+        assertEquals(listOf(IncidentKind.MAIN_FRAME_HTTP_ERROR to 1), observer.store.incidents())
+        val console = observer.store.snapshot(0L).console
+        assertEquals(1, console.size)
+        assertFalse(console[0].message.contains("access-control layer refused"))
+    }
+
+    @Test
+    fun `the rejection reference is read from either header, case-insensitively`() {
+        assertEquals(
+            "18.b60e0317.1791437529.de1b38a3",
+            AccessControlRejection.referenceId(
+                mapOf("X-Reference-Error" to "18.b60e0317.1791437529.de1b38a3")
+            ),
+        )
+        assertEquals(
+            "0.84cf2e17.1791427350.a3d2ddef",
+            AccessControlRejection.referenceId(mapOf("Akamai-Grn" to "0.84cf2e17.1791427350.a3d2ddef")),
+        )
+        assertTrue(AccessControlRejection.isRejection(403, mapOf("Server" to "AkamaiGHost")))
+        assertFalse(AccessControlRejection.isRejection(200, mapOf("Server" to "AkamaiGHost")))
+        assertFalse(AccessControlRejection.isRejection(403, emptyMap()))
+    }
+
+    @Test
     fun `app diagnoses respect the console switch but always keep the network row`() {
         val observer = newObserver(fullPolicy.copy(captureConsole = false))
 
