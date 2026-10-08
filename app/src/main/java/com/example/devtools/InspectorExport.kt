@@ -36,7 +36,16 @@ object InspectorExport {
         return "network-inspector-$stamp.${format.extension}"
     }
 
-    /** Renders the whole session in the requested format. */
+    /**
+     * Renders the whole session in the requested format.
+     *
+     * [sessionStartedAtMillis] and [incidents] are what turn a sparse file from a mystery into an
+     * answer. The buffers are memory-only, so a file exported after Android killed and restored the
+     * process holds only the seconds since the restart — which looks identical to "nothing went
+     * wrong" unless the file says how much time it actually covers. The incident counts name the
+     * failures the app witnessed but the page could not report, so the reader does not have to infer
+     * a dead renderer or a refused certificate from an almost-empty buffer.
+     */
     fun render(
         format: ExportFormat,
         exportedAtMillis: Long,
@@ -46,6 +55,8 @@ object InspectorExport {
         cookies: List<CookieRecord>,
         droppedByRateLimit: Long,
         droppedByPageScript: Long,
+        sessionStartedAtMillis: Long = 0L,
+        incidents: List<Pair<IncidentKind, Int>> = emptyList(),
     ): String {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
         return when (format) {
@@ -57,6 +68,8 @@ object InspectorExport {
                 cookies = cookies,
                 droppedByRateLimit = droppedByRateLimit,
                 droppedByPageScript = droppedByPageScript,
+                sessionStartedAtMillis = sessionStartedAtMillis,
+                incidents = incidents,
             )
 
             ExportFormat.JSON -> json(
@@ -68,6 +81,8 @@ object InspectorExport {
                 droppedByRateLimit = droppedByRateLimit,
                 droppedByPageScript = droppedByPageScript,
                 reveal = reveal,
+                sessionStartedAtMillis = sessionStartedAtMillis,
+                incidents = incidents,
             ).toString(2)
         }
     }
@@ -86,15 +101,38 @@ object InspectorExport {
         cookies: List<CookieRecord>,
         droppedByRateLimit: Long,
         droppedByPageScript: Long,
+        sessionStartedAtMillis: Long = 0L,
+        incidents: List<Pair<IncidentKind, Int>> = emptyList(),
     ): String = buildString {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
 
         appendLine("Network Inspector export")
         appendLine("Generated:      ${timestamp(exportedAtMillis)}")
+        if (sessionStartedAtMillis > 0L) {
+            // Says out loud how much time this file really covers. A buffer cleared by a process
+            // restart otherwise looks like a quiet session rather than a truncated one.
+            val coveredSeconds = (exportedAtMillis - sessionStartedAtMillis) / 1000L
+            appendLine("Session start:  ${timestamp(sessionStartedAtMillis)}")
+            appendLine(
+                "Covers:         $coveredSeconds s of capture (the buffer is memory-only, so " +
+                    "nothing from before this session is in the file)"
+            )
+        }
         appendLine("Capture mode:   " + if (reveal) "FULL CAPTURE — values are unmasked" else "masked (full capture was off)")
         appendLine("Entries:        ${snapshot.entries.size} (evicted: ${snapshot.droppedEntryCount})")
         appendLine("Console lines:  ${snapshot.console.size} (evicted: $droppedConsoleRows)")
         appendLine("Cookies:        ${cookies.size}")
+        if (incidents.isNotEmpty()) {
+            appendLine(
+                "Incidents:      " + incidents.joinToString(", ") { (kind, count) ->
+                    "${kind.label} ×$count"
+                }
+            )
+            appendLine(
+                "                (failures the app witnessed that the page could not report; each has " +
+                    "a row below and a line in CONSOLE)"
+            )
+        }
         if (droppedByRateLimit > 0L || droppedByPageScript > 0L) {
             appendLine(
                 "Dropped by limits: $droppedByRateLimit message(s) over the rate limit, " +
@@ -182,12 +220,34 @@ object InspectorExport {
         droppedByRateLimit: Long,
         droppedByPageScript: Long,
         reveal: Boolean,
+        sessionStartedAtMillis: Long = 0L,
+        incidents: List<Pair<IncidentKind, Int>> = emptyList(),
     ): JSONObject = JSONObject().apply {
         put("exportedAtMillis", exportedAtMillis)
         put("captureMode", if (reveal) "full" else "masked")
         put("unmaskedValuesIncluded", reveal)
         put("captureWarning", if (reveal) InspectorExplanations.FULL_CAPTURE_WARNING else JSONObject.NULL)
         put("revision", snapshot.revision)
+
+        // How much time this document really covers: the buffers are memory-only, so a process
+        // restart silently truncates a session and an offline reader cannot otherwise tell.
+        put(
+            "sessionStartedAtMillis",
+            if (sessionStartedAtMillis > 0L) sessionStartedAtMillis else JSONObject.NULL,
+        )
+        put(
+            "coveredMillis",
+            if (sessionStartedAtMillis > 0L) exportedAtMillis - sessionStartedAtMillis else JSONObject.NULL,
+        )
+        put("incidents", JSONArray().apply {
+            incidents.forEach { (kind, count) ->
+                put(JSONObject().apply {
+                    put("kind", kind.name)
+                    put("label", kind.label)
+                    put("count", count)
+                })
+            }
+        })
 
         put("settings", JSONObject().apply {
             InspectorSetting.values().forEach { setting ->

@@ -199,4 +199,108 @@ class InspectorExportTest {
         assertTrue(InspectorExport.containsUnmaskedValues(settings(reveal = true)))
         assertFalse(InspectorExport.containsUnmaskedValues(settings(reveal = false)))
     }
+
+    /**
+     * A sparse export is the confusing case: on its own it cannot be told apart from a session where
+     * nothing went wrong. The session scope and the incident counts are what make it self-explaining.
+     */
+    @Test
+    fun `the export states how much time it covers and what the app witnessed`() {
+        val observer = observer(reveal = true)
+        val exportedAt = 1_756_000_045_000L
+        val sessionStart = 1_756_000_000_000L
+
+        observer.onRequestFailed(
+            FailureObservation(
+                tabId = "tab",
+                url = "https://example.com/",
+                description = "The WebView renderer process was killed — the system killed it " +
+                    "to reclaim memory",
+                errorCode = null,
+                isForMainFrame = true,
+                method = UNKNOWN_METHOD,
+                observedAtMillis = sessionStart,
+                isRendererProcessDeath = true,
+            )
+        )
+        observer.onHttpError(
+            HttpErrorObservation(
+                tabId = "tab",
+                url = "https://example.com/",
+                method = "GET",
+                statusCode = 403,
+                reasonPhrase = null,
+                headers = emptyMap(),
+                isForMainFrame = true,
+                observedAtMillis = sessionStart,
+            )
+        )
+
+        val incidents = observer.store.incidents()
+        assertEquals(
+            listOf(IncidentKind.RENDERER_KILLED to 1, IncidentKind.MAIN_FRAME_HTTP_ERROR to 1),
+            incidents,
+        )
+
+        fun export(format: ExportFormat): String = InspectorExport.render(
+            format = format,
+            exportedAtMillis = exportedAt,
+            settings = settings(reveal = true),
+            snapshot = observer.store.snapshot(exportedAt),
+            droppedConsoleRows = 0,
+            cookies = emptyList(),
+            droppedByRateLimit = 0L,
+            droppedByPageScript = 0L,
+            sessionStartedAtMillis = sessionStart,
+            incidents = incidents,
+        )
+
+        val text = export(ExportFormat.TEXT)
+        assertTrue(text.contains("Session start:  "))
+        assertTrue(text.contains("Covers:         45 s of capture"))
+        assertTrue(text.contains("renderer killed ×1"))
+        assertTrue(text.contains("main-frame HTTP error ×1"))
+
+        val json = JSONObject(export(ExportFormat.JSON))
+        assertEquals(45_000L, json.getLong("coveredMillis"))
+        assertEquals(sessionStart, json.getLong("sessionStartedAtMillis"))
+        assertEquals(2, json.getJSONArray("incidents").length())
+        assertEquals(
+            "RENDERER_KILLED",
+            json.getJSONArray("incidents").getJSONObject(0).getString("kind"),
+        )
+    }
+
+    /** One failure reaching the app through two channels must be counted once, not twice. */
+    @Test
+    fun `the same failure arriving twice is one incident`() {
+        val observer = observer(reveal = true)
+        val observation = HttpErrorObservation(
+            tabId = "tab",
+            url = "https://example.com/",
+            method = "GET",
+            statusCode = 503,
+            reasonPhrase = null,
+            headers = emptyMap(),
+            isForMainFrame = true,
+            observedAtMillis = 1_756_000_000_000L,
+        )
+
+        observer.onHttpError(observation)
+        observer.onHttpError(observation)
+
+        assertEquals(listOf(IncidentKind.MAIN_FRAME_HTTP_ERROR to 1), observer.store.incidents())
+    }
+
+    /** Switching the inspector off starts a new session, so the old scope must not be claimed. */
+    @Test
+    fun `clearing everything restarts the session scope`() {
+        val observer = observer(reveal = true)
+        val before = observer.store.sessionStartedAt()
+
+        observer.store.clearAll()
+
+        assertTrue(observer.store.incidents().isEmpty())
+        assertTrue(observer.store.sessionStartedAt() >= before)
+    }
 }

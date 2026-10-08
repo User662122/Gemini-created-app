@@ -195,6 +195,23 @@ enum class Initiator(val label: String) {
     SERVICE_WORKER("service worker"),
 }
 
+/**
+ * The failures the **app** witnessed rather than the page, counted per capture session.
+ *
+ * These are the events that leave a session looking empty, because in each of them the page never
+ * ran far enough to report anything: the renderer died, the certificate was refused, the server
+ * rejected the navigation, or the document simply never arrived. Counting them separately means an
+ * export can say "2 renderer kills, 1 main-frame HTTP error" in its header instead of leaving the
+ * reader to work it out from a buffer that may hold almost nothing.
+ */
+enum class IncidentKind(val label: String) {
+    RENDERER_KILLED("renderer killed"),
+    TLS_REFUSED("TLS certificate refused"),
+    MAIN_FRAME_HTTP_ERROR("main-frame HTTP error"),
+    MAIN_FRAME_LOAD_FAILURE("main-frame load failure"),
+    LOAD_TIMEOUT("load watchdog timeout"),
+}
+
 /** State of the request/response pair. */
 enum class EntryState {
     /** The request was observed and no response callback has arrived yet. */

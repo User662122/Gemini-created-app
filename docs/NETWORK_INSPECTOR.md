@@ -111,6 +111,13 @@ Both include every entry in the ring buffer, the console, the cookies, all setti
 counters — and the file starts with a warning plus the capture mode, so a file that contains real
 tokens cannot be mistaken for a masked one. No permission is added for any of this.
 
+The header also carries two lines that only matter when something went wrong, and then matter a lot:
+
+| Line | Why it is there |
+| --- | --- |
+| `Session start:` / `Covers:` | The buffers are memory-only, so they hold nothing from before the process started. At the moment a site is busiest, Android is most likely to have killed and restored the process — and a file covering only the last 40 seconds otherwise looks identical to a session where nothing went wrong. These lines say how much time the file really covers |
+| `Incidents:` | Counts the failures the **app** witnessed that the page could not report: renderer killed, TLS certificate refused, main-frame HTTP error, main-frame load failure, load watchdog timeout. Each has a row in the network list and a line in the console. A failure that reaches the app through two channels is counted once |
+
 The menu entry only appears when the inspector is available, i.e. never in a release build.
 
 ## 3. How the debug-only gate works
@@ -436,6 +443,11 @@ the signature of a navigation that never produced a working document: the server
 handshake was rejected, the renderer was killed, or the response never arrived at all. Each of those
 now leaves its own row and console line, so the distinction is written down instead of having to be
 guessed.
+
+That comparison no longer has to be made by hand: the export header prints `Covers:` (how much time
+the file really holds, which exposes a session truncated by a process restart) and `Incidents:` (the
+count of each failure the app witnessed). On the 08:12 export above, those two lines are the whole
+diagnosis.
 
 What this feature deliberately does **not** do is anything about it. A 403 from a site's anti-bot or
 rate-limiting layer is that site's decision, and this inspector neither evades nor works around it —

@@ -173,7 +173,7 @@ class LiveNetworkObserver(
             // Every correlation for this tab is dead with the renderer, whether or not a row was
             // still pending, so none of them may be paired with a later response.
             clearPendingForTab(observation.tabId)
-            recordAppDiagnosis(
+            val recorded = recordAppDiagnosis(
                 policy = policy,
                 tabId = observation.tabId,
                 url = observation.url,
@@ -184,6 +184,7 @@ class LiveNetworkObserver(
                 note = InspectorExplanations.RENDERER_PROCESS_GONE,
                 observedAtMillis = observation.observedAtMillis,
             )
+            if (recorded) store.recordIncident(IncidentKind.RENDERER_KILLED)
             return
         }
 
@@ -193,7 +194,7 @@ class LiveNetworkObserver(
         // dozens of images or beacons without the user noticing, and logging each would bury the
         // console (and burn the console rate budget) for no benefit.
         if (observation.isForMainFrame) {
-            addDiagnosisConsoleLine(
+            val recorded = addDiagnosisConsoleLine(
                 policy = policy,
                 tabId = observation.tabId,
                 level = ConsoleLevel.ERROR,
@@ -201,6 +202,7 @@ class LiveNetworkObserver(
                     (observation.errorCode?.let { " (WebResourceError errorCode=$it)" } ?: "") +
                     " — ${observation.url}",
             )
+            if (isNewIncident(recorded)) store.recordIncident(IncidentKind.MAIN_FRAME_LOAD_FAILURE)
         }
 
         val now = System.currentTimeMillis()
@@ -249,7 +251,7 @@ class LiveNetworkObserver(
         // explains a "the site just refused me and showed me nothing" session. When the same failure
         // also arrives through the error-page title, addConsole collapses the repeat.
         if (observation.isForMainFrame) {
-            addDiagnosisConsoleLine(
+            val recorded = addDiagnosisConsoleLine(
                 policy = policy,
                 tabId = observation.tabId,
                 level = ConsoleLevel.ERROR,
@@ -258,6 +260,7 @@ class LiveNetworkObserver(
                     ". The server rejected the navigation, so the page's own JavaScript and console " +
                     "output may never have started.",
             )
+            if (isNewIncident(recorded)) store.recordIncident(IncidentKind.MAIN_FRAME_HTTP_ERROR)
         }
 
         val key = keyFor(observation.url, observation.method, policy)
@@ -308,7 +311,7 @@ class LiveNetworkObserver(
     override fun onSslError(observation: SslErrorObservation) {
         val policy = capturePolicy()
         if (!policy.enabled) return
-        recordAppDiagnosis(
+        val recorded = recordAppDiagnosis(
             policy = policy,
             tabId = observation.tabId,
             url = observation.url,
@@ -325,6 +328,7 @@ class LiveNetworkObserver(
             note = InspectorExplanations.SSL_ERROR_CANCELLED,
             observedAtMillis = observation.observedAtMillis,
         )
+        if (recorded) store.recordIncident(IncidentKind.TLS_REFUSED)
     }
 
     override fun onDocumentLoadTimeout(tabId: String, url: String?, elapsedMillis: Long) {
@@ -341,7 +345,7 @@ class LiveNetworkObserver(
                 entry
             }
         }
-        addDiagnosisConsoleLine(
+        val recorded = addDiagnosisConsoleLine(
             policy = policy,
             tabId = tabId,
             level = ConsoleLevel.WARN,
@@ -350,6 +354,7 @@ class LiveNetworkObserver(
                 "error and no HTTP status for it. The server may be overloaded or the renderer " +
                 "stalled; the load has not been cancelled and may still complete.",
         )
+        if (isNewIncident(recorded)) store.recordIncident(IncidentKind.LOAD_TIMEOUT)
     }
 
     override fun onAuthenticationRequest(observation: AuthObservation) {
@@ -561,6 +566,9 @@ class LiveNetworkObserver(
      * would normally report them is dead, never loaded, or still hanging — so no console line and no
      * response callback can ever arrive. Each one becomes a FAILED network row plus a console line,
      * so an exported session always states what happened instead of looking as though nothing did.
+     *
+     * @return true when this was a distinct failure, false when it was the same failure arriving
+     *   through a second channel and collapsing into a row already recorded.
      */
     private fun recordAppDiagnosis(
         policy: CapturePolicy,
@@ -571,11 +579,15 @@ class LiveNetworkObserver(
         description: String,
         note: String?,
         observedAtMillis: Long,
-    ) {
+    ): Boolean {
         val now = System.currentTimeMillis()
         if (!messageBudget.allow(now)) {
             droppedByRate.incrementAndGet()
-            return
+            // The row was dropped by the rate limit, but the failure still happened, so the console
+            // line and the session counter still get it.
+            return isNewIncident(
+                addDiagnosisConsoleLine(policy, tabId, ConsoleLevel.ERROR, description)
+            )
         }
         // A dead renderer often cannot report its URL any more. Fall back to the newest main-frame
         // document the inspector saw for this tab rather than storing a row with a blank URL.
@@ -621,7 +633,7 @@ class LiveNetworkObserver(
                 state = EntryState.FAILED,
             )
         )
-        addDiagnosisConsoleLine(policy, tabId, ConsoleLevel.ERROR, description)
+        return isNewIncident(addDiagnosisConsoleLine(policy, tabId, ConsoleLevel.ERROR, description))
     }
 
     /**
@@ -638,19 +650,19 @@ class LiveNetworkObserver(
         tabId: String,
         level: ConsoleLevel,
         message: String,
-    ) {
-        if (!policy.captureConsole) return
+    ): ConsoleEntry? {
+        if (!policy.captureConsole) return null
         val now = System.currentTimeMillis()
         if (!consoleBudget.allow(now)) {
             droppedByRate.incrementAndGet()
-            return
+            return null
         }
         val scrubbed = Redaction.scrubText(
             message,
             InspectorLimits.MAX_CONSOLE_MESSAGE_CHARS,
             policy.revealSensitiveValues,
         )
-        store.addConsole(
+        val stored = store.addConsole(
             ConsoleEntry(
                 id = store.allocateConsoleId(),
                 tabId = tabId,
@@ -665,7 +677,20 @@ class LiveNetworkObserver(
             )
         )
         consoleMessagesSinceCheck.incrementAndGet()
+        return stored
     }
+
+    /**
+     * True when [stored] is a new event rather than a repeat collapsed into an earlier row.
+     *
+     * One failure can reach the app through two channels — a 4xx arrives both as a delivered response
+     * and as the error-page title — and [NetworkLogStore.addConsole] merges those into one row with a
+     * repeat count. Counting the incident only for unmerged rows keeps the session total a count of
+     * *failures* rather than of callbacks. A null result means the console switch was off or the
+     * console budget was spent; the failure still happened, so it still counts.
+     */
+    private fun isNewIncident(stored: ConsoleEntry?): Boolean =
+        stored == null || stored.repeatCount == 1
 
     private fun buildEntry(
         id: Long,

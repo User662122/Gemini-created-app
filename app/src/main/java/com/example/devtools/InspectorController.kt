@@ -210,6 +210,8 @@ class InspectorController(
             cookies = _uiState.value.cookies,
             droppedByRateLimit = liveObserver.droppedByRateLimit(),
             droppedByPageScript = liveObserver.droppedByPageScript(),
+            sessionStartedAtMillis = store.sessionStartedAt(),
+            incidents = store.incidents(),
         )
     }
 

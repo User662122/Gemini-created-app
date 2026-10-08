@@ -23,6 +23,20 @@ class NetworkLogStore {
     private var droppedConsoleCount = 0
     private var revisionCounter = 0L
 
+    /**
+     * When this capture session began, on the app clock.
+     *
+     * The buffers are memory-only, so they hold nothing from before the process started — and at the
+     * exact moment a site is busiest, Android is most likely to have killed the process and restored
+     * it. Without this stamp an export of a fresh, nearly empty buffer is indistinguishable from an
+     * export of a session in which nothing went wrong; with it, the reader can see that the file
+     * covers the last 40 seconds rather than the whole attempt.
+     */
+    private var sessionStartedAtMillis = System.currentTimeMillis()
+
+    /** Counts of the failures the app itself witnessed, in [IncidentKind] order. */
+    private val incidents = LinkedHashMap<IncidentKind, Int>()
+
     /** Increases on every stored change; the UI compares this to decide whether to rebuild. */
     val revision: Long
         get() = synchronized(lock) { revisionCounter }
@@ -181,6 +195,10 @@ class NetworkLogStore {
             consoleEntries.clear()
             droppedEntryCount = 0
             droppedConsoleCount = 0
+            // A cleared buffer is a new session, so its scope starts again here too; keeping the old
+            // start time would make the next export claim to cover time it holds nothing for.
+            incidents.clear()
+            sessionStartedAtMillis = System.currentTimeMillis()
             revisionCounter++
         }
     }
@@ -190,6 +208,19 @@ class NetworkLogStore {
     fun consoleCount(): Int = synchronized(lock) { consoleEntries.size }
 
     fun droppedCounts(): Pair<Int, Int> = synchronized(lock) { droppedEntryCount to droppedConsoleCount }
+
+    /** Notes one failure the app witnessed. Counted rather than stored, so it survives eviction. */
+    fun recordIncident(kind: IncidentKind) {
+        synchronized(lock) { incidents[kind] = (incidents[kind] ?: 0) + 1 }
+    }
+
+    /** Incidents this session, in a stable order, excluding kinds that never happened. */
+    fun incidents(): List<Pair<IncidentKind, Int>> = synchronized(lock) {
+        incidents.entries.sortedBy { it.key.ordinal }.map { it.key to it.value }
+    }
+
+    /** When this capture session began; reset by [clearAll], not by [clearEntries]. */
+    fun sessionStartedAt(): Long = synchronized(lock) { sessionStartedAtMillis }
 
     /** Distinct origins seen in this tab, newest first. Used to query cookies for the sites in play. */
     fun originsForTab(tabId: String, limit: Int): List<String> {
