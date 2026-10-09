@@ -2,6 +2,8 @@ package com.example.ui
 
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -58,10 +61,17 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     val activeTab = viewModel.activeTab ?: return
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
 
     var address by remember(activeTab.id) { mutableStateOf(activeTab.url) }
     var isEditingAddress by remember(activeTab.id) { mutableStateOf(false) }
     var showTabPicker by remember { mutableStateOf(false) }
+    var showNetworkInspector by remember { mutableStateOf(false) }
+    val exportHarLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) viewModel.exportNetworkLog(context.contentResolver, uri)
+    }
     val geckoView = remember(activeTab.id) { mutableStateOf<GeckoView?>(null) }
 
     LaunchedEffect(activeTab.id, activeTab.url) {
@@ -75,7 +85,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
         viewModel.navigate(address)
     }
 
-    BackHandler(enabled = activeTab.canGoBack) {
+    BackHandler(enabled = activeTab.canGoBack && !showNetworkInspector && !showTabPicker) {
         viewModel.goBack()
     }
 
@@ -157,6 +167,16 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     IconButton(onClick = viewModel::goForward, enabled = activeTab.canGoForward) {
                         Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
                     }
+                    TextButton(onClick = { showNetworkInspector = true }) {
+                        Text(
+                            text = if (viewModel.isNetworkRecording) {
+                                "● REC · Traffic ${viewModel.networkEntries.size}"
+                            } else {
+                                "Traffic ${viewModel.networkEntries.size}"
+                            },
+                            color = if (viewModel.isNetworkRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
 
                 if (activeTab.isLoading) {
@@ -202,6 +222,20 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                 }
             }
         }
+    }
+
+    if (showNetworkInspector) {
+        NetworkInspectorDialog(
+            entries = viewModel.networkEntries,
+            captureReady = viewModel.isNetworkCaptureReady,
+            recording = viewModel.isNetworkRecording,
+            captureError = viewModel.networkCaptureError,
+            exportStatus = viewModel.networkExportStatus,
+            onRecordingChange = viewModel::setNetworkRecording,
+            onClear = viewModel::clearNetworkLogs,
+            onExport = { exportHarLauncher.launch("network-activity.har") },
+            onDismiss = { showNetworkInspector = false },
+        )
     }
 
     if (showTabPicker) {

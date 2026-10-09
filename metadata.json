@@ -1,6 +1,6 @@
 {
   "name": "Gecko Browser",
-  "description": "A minimal Android web browser powered by Mozilla GeckoView and SpiderMonkey.",
+  "description": "A minimal Android web browser powered by Mozilla GeckoView and SpiderMonkey, with an opt-in local network inspector and HAR export.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

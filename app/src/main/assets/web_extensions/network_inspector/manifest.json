@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "Gecko Browser Network Inspector",
+  "version": "1.0.0",
+  "description": "Opt-in, on-device network inspection for the Gecko Browser app.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "network-inspector@gecko-browser.local"
+    }
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "nativeMessaging",
+    "geckoViewAddons",
+    "<all_urls>"
+  ]
+}
