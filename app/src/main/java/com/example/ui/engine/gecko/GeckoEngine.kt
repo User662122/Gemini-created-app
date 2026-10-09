@@ -86,7 +86,10 @@ class GeckoEngine(
      * relayed by the bridge extension's background script. Inert in release builds, where
      * [inspector] is [NullInspectorRuntime] and the extension attaches no listeners.
      */
-    private val networkCapture = GeckoNetworkCapture(inspector, tabUrls)
+    private val networkCapture = GeckoNetworkCapture(inspector, tabUrls).also {
+        // The inspector's export prints where this engine's capture pipeline stands.
+        (inspector as? InspectorController)?.engineDiagnosticsProvider = { GeckoNetworkCapture.diagnostics() }
+    }
 
     private val downloads = GeckoDownloader(
         context = context,
@@ -155,8 +158,6 @@ class GeckoEngine(
         GeckoRuntimeManager.get(context)
         bridge.install(context)
         networkCapture.attach()
-        // The inspector's export prints where this engine's capture pipeline stands.
-        (inspector as? InspectorController)?.engineDiagnosticsProvider = { GeckoNetworkCapture.diagnostics() }
     }
 
     /** Re-registers the bridge on every live session, for when the extension finished loading late. */
