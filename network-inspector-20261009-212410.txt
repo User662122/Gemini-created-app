@@ -1,0 +1,76 @@
+Network Inspector export
+Generated:      2026-10-09 21:24:10.729
+Session start:  2026-10-09 21:23:38.091
+Covers:         32 s of capture (the buffer is memory-only, so nothing from before this session is in the file)
+Capture mode:   FULL CAPTURE — values are unmasked
+Entries:        0 (evicted: 0)
+Console lines:  6 (evicted: 0)
+Cookies:        0
+
+!! Reveal sensitive values is ON. Authorization and Cookie headers, tokens in URLs, cookie values, bodies and console text are stored exactly as observed, and any file you export contains them in the clear. This is a debug-build-only tool: switch the switch off to go back to masking at capture time.
+
+SETTINGS
+  Network Inspector: true
+  Reveal sensitive values: true
+  Capture request bodies: true
+  Capture response body previews: true
+  JavaScript console: true
+  Include verbose console output: true
+
+WHAT THE GECKO ENGINE LETS THIS APP OBSERVE
+  [yes] Request URL and method, with timestamps
+  [yes] Complete request and response header sets, as they went on the wire
+  [no ] Request bodies passed to fetch/XHR/sendBeacon by the page
+  [yes] Sensitive values unmasked while "Reveal sensitive values" is on
+  [yes] HTTP status for every response, including 2xx/3xx
+  [yes] Response headers and Content-Type for every response
+  [yes] Response body previews for text-like resources (documents, scripts, stylesheets, XHR)
+  [yes] Redirect chains, each hop recorded with its status
+  [yes] Cookie scope (domain/path/flags/expiry) for every cookie in the engine's store
+  [yes] Cookie values, masked or revealed per the capture mode
+  [yes] Uncaught JavaScript errors, reported by the page bridge
+  [no ] console.log/warn/error from the page
+  [yes] Renderer death, refused TLS certificates and stalled loads, reported by the app itself
+  [no ] WebSocket frames
+  [no ] Service Worker fetches
+  [no ] Traffic from private (incognito) tabs
+  [no ] Anything at all in a release build
+
+CAPTURE SOURCE (the engine's own capture pipeline, for locating a failure)
+  Bridge extension installed: yes
+  Installed extension version: 1.1
+  Bundled extension version: 1.1
+  Background-message delegate registered: yes
+  Capture settings pulls answered: 0
+  Last settings reply (capture enabled): —
+  Network records received: 0
+  Last record: —
+  Cookie dumps received: 0
+  Cookie changes received: 0
+  Extension status reports: 0
+
+========================================================================
+NETWORK ENTRIES (newest first)
+========================================================================
+(nothing captured)
+
+========================================================================
+CONSOLE (newest first)
+========================================================================
+[error] 2026-10-09 21:24:10.164 Script error.
+    at https://sdk.irctc.corover.ai/askdisha-bucket/chatbotlib.min.js?1791561244547
+[error] 2026-10-09 21:24:08.127 Uncaught error
+    (repeated 5 times)
+[error] 2026-10-09 21:23:59.208 Uncaught error
+    (repeated 6 times)
+[error] 2026-10-09 21:23:53.442 Uncaught error
+[error] 2026-10-09 21:23:52.191 TypeError: _.y is not a function
+    at https://www.google.com/xjs/_/js/k=xjs.qs.en_GB.8hk7is8nsUc.2019.O/ck=xjs.qs.4g8CM1A0lIY.L.F4.O/am=AAAEAAAAAAAAQgAAACAAAAAAAAABAIgAgAAAAAAAAAAAAAAAAAAIIAAQAUAIAAAAAAAAAAAAEAAAAAAAAEAAAAAAoIEBAAAAAAAAAAAAAhEAACAIAAgAwAkAEAAAIAAQAAAAMAEAAAAAAAAAEAASABAAoAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBAIACAAAQAAAAAAACAQAIEAABAAAABAAAAAYAAAQAAABIACAIAAoAAAAAACAAAAAAIAAAAAAAAAAAhQgAAAAAAROAAAABEAAPwjgDMAABBgAAAAAEAAAAAAAAAAgAAAAAAAAAACAAAAAAAS0QEACAAAAASTBQAA9DACDAAAIAAEEAACAAAAAAAAAABASIAEAEAAAAAAAMAAAAACAABEAAAAAMgAhAAIAAgAEEABCAAAEADAGQABAAAAgACwIoAAQAAAAAAAEAAAAACAAABBAEIAAQBAkAQAAAAAFIAAAAAAAEBgAAAAAAAAAAAAAAgAAAAAANSIAAAADBAIEAGQAAAggAEAgAASAAAAAAAMIAAAABAAEAAAAAAAQAIAAAAAAAAAAAAAAiAAAAAAAAIAAAEBBAwAAACAHAAPJPgQQQEAAAAAAAAAAAAAAAAAAAAAAAAAAABwgAxwBh6AABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoCF4AAAAAAAAAEw/d=1/exm=SNUn3,X3N0Bf,YV5bee,aD8OEe,attn,cEt90b,cdos,csi,d,dtl0hd,eHDfl,gwc,hsm,jsa,qddgKe,qim,rr4R9e,sTsDMc,slocp/excm=KbYbb,MIukzb,P006yf,zsn6wb/ed=1/dg=4/br=1/ujg=1/ichc=1/rs=ACT90oE0Nlympsgsw9XQSXiPAhLXAQRMsA/ee=ALeJib:B8gLwd;AfeaP:TkrAjf;BMxAGc:E5bFse;BgS6mb:fidj5d;BjwMce:cXX2Wb;BuJtU:v6yjN;CIZTGb:Kqhykb;CxXAWb:YyRLvc;DM55c:imLrKe;DQEued:Fevhcf;DULqB:RKfG5c;Dkk6ge:JZmW9e;DpcR3d:zL72xf;EABSZ:MXZt9d;ESrPQc:mNTJvc;EVNhjf:pw70Gc;EjXHpb:pSHqh;EmZ2Bf:zr1jrb;EnlcNd:WeHg4;F54IAe:ZgsFh;F9mqte:rlHKFc;FSxmUe:fiZR8b;Fkukfc:i8H2c;Fmv9Nc:O1Tzwc;FqHJkd:yQamIb;G0KhTb:LIaoZ;GleZL:J1A7Od;HMDDWe:G8QUdb;HtPxrd:Gx8jAb;IBADCc:RYquRb;IoGlCf:b5lhvb;IsdWVc:qzxzOb;JXJSm:ii1RGf;JXS8fb:Qj0suc;JqSq7d:y9ePhe;JsbNhc:Xd8iUd;K08hxe:zmbGlf;K5nYTd:ZDZcre;KA3P2:C3JnCe;KDb6nb:fE9n2;KOxcK:OZqGte;KQzWid:ZMKkN;KdIHef:BWtNj;KpRAue:Tia57b;LBgRLc:SdcwHb,XVMNvd;LBn8Cf:bJ9L0c;LEikZe:byfTOb,lsjVmc;LXA8b:q7OdKd;LsNahb:ucGLNb;MNkAde:KMCd1d;NJ1rfe:qTnoBf;NPKaK:SdcwHb;NSEoX:lazG7b;NacvSd:SRIygd;NjIwef:YVgi7d;Np8Qkd:Dpx6qc;Nyt6ic:jn2sGd;OIfWUb:qfOYcd;OgagBe:cNTe0;OiqE2c:TFpEK;OoK5v:Sp69O;OohIYe:mpEAQb;Pjplud:PoEs9b;PpTLXd:pJYjx;PqHfGe:im2cZe;Q1Ow7b:x5CSu;Q7iJ9c:bVLZ3d;QE20Be:yxCHBd;QFOGlf:PQ2Aoe;QGR0gd:Mlhmy;QYLF2b:pAQYUd;Qk7y:4
+[error] 2026-10-09 21:23:51.971 Uncaught error
+
+========================================================================
+COOKIES
+========================================================================
+(none visible)
+
+End of export.
