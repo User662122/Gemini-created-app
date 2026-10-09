@@ -1,0 +1,64 @@
+Network Inspector export
+Generated:      2026-10-08 19:10:34.184
+Session start:  2026-10-08 19:07:25.373
+Covers:         188 s of capture (the buffer is memory-only, so nothing from before this session is in the file)
+Capture mode:   FULL CAPTURE — values are unmasked
+Entries:        0 (evicted: 0)
+Console lines:  5 (evicted: 0)
+Cookies:        0
+
+!! Reveal sensitive values is ON. Authorization and Cookie headers, tokens in URLs, cookie values, bodies and console text are stored exactly as observed, and any file you export contains them in the clear. This is a debug-build-only tool: switch the switch off to go back to masking at capture time.
+
+SETTINGS
+  Network Inspector: true
+  Reveal sensitive values: true
+  Capture request bodies: true
+  Capture response body previews: true
+  JavaScript console: true
+  Include verbose console output: true
+
+WHAT WEBVIEW LETS THIS APP OBSERVE
+  [yes] Request URL and method, with timestamps
+  [yes] Request headers, as the subset WebView exposes
+  [yes] Request bodies passed to fetch/XHR/sendBeacon by the page
+  [yes] Sensitive values unmasked while "Reveal sensitive values" is on
+  [yes] HTTP status for 4xx/5xx and for responses the app intercepts
+  [yes] Response headers and Content-Type for responses the app intercepts
+  [yes] Cookie scope (domain/path/flags/expiry) for cookies the app can see
+  [yes] Cookie scope read back from Set-Cookie for the page's own fetch/XHR
+  [yes] console.log/warn/error and uncaught JavaScript errors
+  [yes] Renderer death, refused TLS certificates and stalled loads, reported by the app itself
+  [no ] Top-level status line for 2xx/3xx responses the app does not intercept
+  [no ] Response bodies of resources the app does not fetch itself
+  [no ] Complete header sets (the platform decides what to expose)
+  [no ] WebSocket frames
+  [no ] Service Worker fetches (without androidx.webkit)
+  [no ] Redirect chains for subresources
+  [no ] Requests served from cache with no callback
+  [no ] Anything at all in a release build
+
+========================================================================
+NETWORK ENTRIES (newest first)
+========================================================================
+(nothing captured)
+
+========================================================================
+CONSOLE (newest first)
+========================================================================
+[error] 2026-10-08 19:08:39.586 Uncaught error
+    (repeated 5 times)
+[error] 2026-10-08 19:08:38.305 Script error.
+    at https://sdk.irctc.corover.ai/askdisha-bucket/chatbotlib.min.js?1791466716373
+[error] 2026-10-08 19:08:38.274 Uncaught error
+    (repeated 4 times)
+[error] 2026-10-08 19:08:34.387 Uncaught error
+    (repeated 5 times)
+[error] 2026-10-08 19:08:29.864 Uncaught error
+    (repeated 7 times)
+
+========================================================================
+COOKIES
+========================================================================
+(none visible)
+
+End of export.
