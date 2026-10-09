@@ -159,6 +159,7 @@ real engine rather than on the OS's:
 | Java 17 source/target + `jvmTarget` 17 | GeckoView's own requirement; Kotlin and Java targets must match or AGP fails the build | `app/build.gradle.kts` |
 | `jniLibs.useLegacyPackaging = true`, unsupported ABIs excluded, no `android:extractNativeLibs` attribute | Exactly how Firefox for Android ships Gecko (`mobile/android/fenix/app/build.gradle`), and the combination that packages successfully; the manifest attribute conflicts with AGP's own native-packaging option | `app/build.gradle.kts`, `AndroidManifest.xml` |
 | `windowSoftInputMode="stateUnspecified|adjustResize"` | GeckoView's quick-start asks for it, so the on-screen keyboard resizes the page instead of covering it | `AndroidManifest.xml` |
+| `extensionsProcessEnabled(true)` + `extensionsWebAPIEnabled(true)` | Both default to **false**, and with them off Gecko never spawns the process an extension's *background page* runs in. Content scripts still work (they live in the page's process), which is precisely the failure mode where the page-error/automation bridge works but the network-capture background script silently does not exist — diagnosed from a logcat showing zero `GeckoView:WebExtension:Message` events and no extension process in `ServiceAllocator`. Firefox for Android sets both (`GeckoProvider.kt` in mozilla-firefox/firefox) | `GeckoRuntimeManager.get` |
 
 The CI job also prints the build's root-cause lines and log tail when it fails, because Gradle reports
 a packaging failure *after* the stack trace.

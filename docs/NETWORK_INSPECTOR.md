@@ -572,7 +572,8 @@ pipeline stage:
 | --- | --- |
 | `Installed extension version` vs `Bundled extension version` | The profile still runs an older copy of the bridge extension — an in-place APK upgrade keeps the profile, so the new background script is not installed. The app detects this and forces one reinstall; if both lines still differ, clear the app's data once or reinstall. |
 | `Background-message delegate registered: no` | The app never registered the delegate that receives the extension's messages. |
-| `Capture settings pulls answered: 0` | The extension's settings pull never reached the app (or the app never started the Gecko engine). |
+| `Capture settings pulls answered: 0` | The extension's settings pull never reached the app (or the app never started the Gecko engine). The most common cause: **the background script is not running at all** — Gecko only spawns an extension's background process when `extensionsProcessEnabled(true)` is set on the runtime (it defaults to false; content scripts keep working without it, which is what makes this confusing). The app sets it; if this row is 0, check that the runtime was created with it. |
+| `Extension status reports: 0` | Same cause as above: the background script never started, so it never reported anything. |
 | `Network records received: 0` (with pulls > 0) | The extension is not attaching listeners — check the extension's own report below the counters. |
 | `permission webRequest: false` (in the extension's report) | Gecko did not grant the built-in extension the `webRequest` permission — the capture cannot work at all. |
 | `listener error: …` (in the extension's report) | Attaching the listeners threw; the message says why. |

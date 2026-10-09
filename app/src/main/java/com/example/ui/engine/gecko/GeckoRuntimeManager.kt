@@ -13,6 +13,7 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.StorageController
 import org.mozilla.geckoview.WebExtension
+import org.mozilla.geckoview.WebExtensionController
 
 /**
  * The single [GeckoRuntime] every tab shares.
@@ -30,6 +31,12 @@ import org.mozilla.geckoview.WebExtension
  *    debug build you can `adb forward tcp:6000 localfilesystem:/data/data/<pkg>/firefox-debugger-socket`
  *    and attach desktop Firefox DevTools for the real Network/Console/Storage panels. It is gated on
  *    `BuildConfig.DEBUG` so a release build exposes nothing.
+ *  * **Extension process and extension Web API enabled.** This is what makes an extension's
+ *    *background script* run at all: `extensionsProcessEnabled` defaults to **false**, and with it
+ *    off Gecko never spawns the process an extension's background page lives in — content scripts
+ *    still run (they live in the page's process), which is exactly the failure mode where the
+ *    automation/error bridge works but the network-capture background script silently does not
+ *    exist. Firefox for Android sets both flags; see `GeckoProvider.kt` in mozilla-firefox/firefox.
  *  * Login autofill is off: this app has no password manager, so Gecko should not offer to save
  *    credentials it could never fill back in.
  */
@@ -103,9 +110,26 @@ object GeckoRuntimeManager {
                     .remoteDebuggingEnabled(BuildConfig.DEBUG)
                     .javaScriptEnabled(true)
                     .webFontsEnabled(true)
+                    // Without these two the bridge extension's background script never runs (see
+                    // the class comment): content scripts work, the background page does not exist.
+                    .extensionsProcessEnabled(true)
+                    .extensionsWebAPIEnabled(true)
                     .loginAutofillEnabled(false)
                     .build()
-            ).also { runtime = it }
+            ).also { created ->
+                runtime = created
+                // If the extension process is ever killed beyond Gecko's crash threshold, spawning
+                // stays disabled until this is called again — the background script would silently
+                // stop coming back. Firefox for Android re-arms it the same way.
+                created.webExtensionController.setExtensionProcessDelegate(
+                    object : WebExtensionController.ExtensionProcessDelegate {
+                        override fun onDisabledProcessSpawning() {
+                            Log.w(TAG, "extension process spawning disabled after crashes; re-arming")
+                            runCatching { created.webExtensionController.enableExtensionProcessSpawning() }
+                        }
+                    }
+                )
+            }
         }
     }
 
