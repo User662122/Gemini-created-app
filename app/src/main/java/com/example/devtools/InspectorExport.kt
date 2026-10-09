@@ -59,6 +59,7 @@ object InspectorExport {
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
         capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
         capabilitiesTitle: String = "WHAT WEBVIEW LETS THIS APP OBSERVE",
+        engineDiagnostics: List<Pair<String, String>> = emptyList(),
     ): String {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
         return when (format) {
@@ -74,6 +75,7 @@ object InspectorExport {
                 incidents = incidents,
                 capabilities = capabilities,
                 capabilitiesTitle = capabilitiesTitle,
+                engineDiagnostics = engineDiagnostics,
             )
 
             ExportFormat.JSON -> json(
@@ -88,6 +90,7 @@ object InspectorExport {
                 sessionStartedAtMillis = sessionStartedAtMillis,
                 incidents = incidents,
                 capabilities = capabilities,
+                engineDiagnostics = engineDiagnostics,
             ).toString(2)
         }
     }
@@ -110,6 +113,7 @@ object InspectorExport {
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
         capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
         capabilitiesTitle: String = "WHAT WEBVIEW LETS THIS APP OBSERVE",
+        engineDiagnostics: List<Pair<String, String>> = emptyList(),
     ): String = buildString {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
 
@@ -159,6 +163,13 @@ object InspectorExport {
         appendLine(capabilitiesTitle)
         capabilities.forEach { (label, available) ->
             appendLine("  [${if (available) "yes" else "no "}] $label")
+        }
+        if (engineDiagnostics.isNotEmpty()) {
+            appendLine()
+            appendLine("CAPTURE SOURCE (the engine's own capture pipeline, for locating a failure)")
+            engineDiagnostics.forEach { (label, value) ->
+                appendLine("  $label: $value")
+            }
         }
 
         appendLine()
@@ -230,6 +241,7 @@ object InspectorExport {
         sessionStartedAtMillis: Long = 0L,
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
         capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
+        engineDiagnostics: List<Pair<String, String>> = emptyList(),
     ): JSONObject = JSONObject().apply {
         put("exportedAtMillis", exportedAtMillis)
         put("captureMode", if (reveal) "full" else "masked")
@@ -277,6 +289,10 @@ object InspectorExport {
                     put("available", available)
                 })
             }
+        })
+
+        put("captureSource", JSONObject().apply {
+            engineDiagnostics.forEach { (label, value) -> put(label, value) }
         })
 
         put("entries", JSONArray().apply { snapshot.entries.forEach { put(entryJson(it)) } })

@@ -3,6 +3,7 @@ package com.example.ui.engine.gecko
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.MainThread
 import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,12 +53,26 @@ object GeckoRuntimeManager {
      */
     const val BRIDGE_NET_NATIVE_APP = "browserbridge-net"
 
+    /**
+     * The version in `assets/browserbridge/manifest.json`. `ensureBuiltIn` reinstalls a built-in
+     * extension only when the version differs, so this is what makes an upgraded APK actually pick
+     * up a changed extension — and it is checked again below, because "the profile already has an
+     * older copy" is exactly how an upgrade silently changes nothing.
+     */
+    const val BRIDGE_EXTENSION_VERSION = "1.1"
+
     private const val BRIDGE_EXTENSION_ASSETS = "resource://android/assets/browserbridge/"
+
+    private const val TAG = "GeckoCapture"
 
     @Volatile
     private var runtime: GeckoRuntime? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Guards the one forced reinstall of a stale extension copy (see [ensureBridgeExtension]). */
+    @Volatile
+    private var forcedReinstallAttempted = false
 
     /**
      * The delegate that receives messages from the extension's background script (see
@@ -96,7 +111,13 @@ object GeckoRuntimeManager {
 
     /**
      * Installs (or re-uses) the bridge extension. Safe to call repeatedly: `ensureBuiltIn` only
-     * installs when the extension is not installed yet, and the extension outlives the process.
+     * reinstalls when the version differs, and the extension outlives the process.
+     *
+     * The installed copy's version is checked against [BRIDGE_EXTENSION_VERSION] anyway: an
+     * in-place APK upgrade keeps the profile, and if `ensureBuiltIn` ever reports the old copy
+     * instead of updating it, the extension's new abilities (the background script's capture)
+     * would silently not exist while the old content script keeps working — which looks exactly
+     * like "nothing changed". A mismatch forces one uninstall + reinstall.
      */
     @MainThread
     fun ensureBridgeExtension(context: Context) {
@@ -106,12 +127,36 @@ object GeckoRuntimeManager {
             .ensureBuiltIn(BRIDGE_EXTENSION_ASSETS, BRIDGE_EXTENSION_ID)
             .accept(
                 { extension ->
-                    if (extension != null) {
-                        _bridgeExtension.value = extension
-                        registerExtensionMessageDelegate(extension)
-                    } else {
+                    if (extension == null) {
                         _bridgeError.value = "the bridge extension did not load"
+                        return@accept
                     }
+                    val installedVersion = extension.metaData?.version
+                    if (installedVersion != null &&
+                        installedVersion != BRIDGE_EXTENSION_VERSION &&
+                        !forcedReinstallAttempted
+                    ) {
+                        // The profile still has an older copy and ensureBuiltIn kept it. Force the
+                        // update once; the next call installs the bundled version.
+                        forcedReinstallAttempted = true
+                        _bridgeError.value = null
+                        Log.w(
+                            TAG,
+                            "bridge extension is version $installedVersion but the APK bundles " +
+                                "$BRIDGE_EXTENSION_VERSION; forcing a reinstall"
+                        )
+                        geckoRuntime.webExtensionController.uninstall(extension).accept(
+                            { ensureBridgeExtension(context) },
+                            { error ->
+                                _bridgeError.value =
+                                    "reinstalling the bridge extension failed: ${error?.message}"
+                            }
+                        )
+                        return@accept
+                    }
+                    _bridgeExtension.value = extension
+                    registerExtensionMessageDelegate(extension)
+                    Log.i(TAG, "bridge extension installed (version ${installedVersion ?: "?"})")
                 },
                 { error -> _bridgeError.value = error?.message ?: "the bridge extension did not load" }
             )
@@ -132,7 +177,13 @@ object GeckoRuntimeManager {
         // WebExtension.setMessageDelegate is @UiThread, and the install callback may arrive on a
         // Gecko handler thread, so the registration is posted to the main thread.
         mainHandler.post {
-            runCatching { extension.setMessageDelegate(delegate, BRIDGE_NET_NATIVE_APP) }
+            runCatching {
+                extension.setMessageDelegate(delegate, BRIDGE_NET_NATIVE_APP)
+                Log.i(TAG, "background-message delegate registered for $BRIDGE_NET_NATIVE_APP")
+            }.onFailure { error ->
+                GeckoCaptureDiagnostics.recordError("setMessageDelegate failed: ${error.message}")
+                Log.e(TAG, "registering the background-message delegate failed", error)
+            }
         }
     }
 

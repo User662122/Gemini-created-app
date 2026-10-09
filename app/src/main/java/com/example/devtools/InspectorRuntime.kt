@@ -69,6 +69,13 @@ interface InspectorRuntime {
      */
     fun capturePolicy(): CapturePolicy
 
+    /**
+     * Diagnostics for the export's CAPTURE SOURCE section: where the engine's capture pipeline
+     * currently stands (extension version, delegate registered, records received). Empty under the
+     * WebView engine and in release builds, where there is nothing engine-specific to report.
+     */
+    fun engineCaptureDiagnostics(): List<Pair<String, String>>
+
     /** Changes whenever the injected script must be re-evaluated (settings changes). */
     val scriptToken: Long
 
@@ -124,6 +131,7 @@ object NullInspectorRuntime : InspectorRuntime {
     override val observer: NetworkObserver = NullNetworkObserver
     override val enabled: Boolean = false
     override fun capturePolicy(): CapturePolicy = CapturePolicy.DISABLED
+    override fun engineCaptureDiagnostics(): List<Pair<String, String>> = emptyList()
     override val scriptToken: Long = 0L
     override val uiState: StateFlow<InspectorUiState> = emptyState
 

@@ -47,6 +47,16 @@ class InspectorController(
     override fun capturePolicy(): CapturePolicy = settings.policy()
     override val scriptToken: Long get() = settings.version().toLong()
 
+    /**
+     * Set by the Gecko engine to report where its capture pipeline stands; the export's CAPTURE
+     * SOURCE section prints it. Null under the WebView engine.
+     */
+    @Volatile
+    var engineDiagnosticsProvider: (() -> List<Pair<String, String>>)? = null
+
+    override fun engineCaptureDiagnostics(): List<Pair<String, String>> =
+        engineDiagnosticsProvider?.invoke() ?: emptyList()
+
     private val _uiState = MutableStateFlow(
         InspectorUiState(
             available = true,
@@ -222,6 +232,7 @@ class InspectorController(
             incidents = store.incidents(),
             capabilities = InspectorExplanations.capabilitySummary(engine),
             capabilitiesTitle = InspectorExplanations.capabilitySectionTitle(engine),
+            engineDiagnostics = engineCaptureDiagnostics(),
         )
     }
 

@@ -1,6 +1,7 @@
 package com.example.ui.engine.gecko
 
 import android.net.Uri
+import android.util.Log
 import com.example.devtools.CapturePolicy
 import com.example.devtools.EngineCookie
 import com.example.devtools.EngineRequestRecord
@@ -49,11 +50,15 @@ class GeckoNetworkCapture(
     /** Registers the extension-level message delegate. Idempotent; replaces any previous one. */
     fun attach() {
         GeckoRuntimeManager.setExtensionMessageDelegate(Delegate())
+        GeckoCaptureDiagnostics.delegateRegistered = true
+        Log.i(TAG, "capture delegate registered")
     }
 
     private fun settingsReply(): JSONObject {
         val policy: CapturePolicy = runCatching { inspector.capturePolicy() }
             .getOrDefault(CapturePolicy.DISABLED)
+        GeckoCaptureDiagnostics.recordSettingsPull(policy.enabled)
+        Log.i(TAG, "settings pull answered: enabled=${policy.enabled}")
         return JSONObject()
             .put("enabled", policy.enabled)
             .put("responsePreviews", policy.enabled && policy.captureResponseBodies)
@@ -84,6 +89,8 @@ class GeckoNetworkCapture(
                 bodyPreview = json.optString("bodyPreview").takeIf { it.isNotBlank() },
                 bodyTruncated = json.optBoolean("bodyTruncated"),
             )
+            GeckoCaptureDiagnostics.recordNetworkRecord(record.url)
+            Log.i(TAG, "record: ${record.method} ${record.url.take(120)} -> ${record.statusCode ?: record.error ?: "?"}")
             inspector.dispatch(InspectorMessage.EngineRequest(record))
         }
     }
@@ -108,7 +115,45 @@ class GeckoNetworkCapture(
                     hostOnly = cookie.optBoolean("hostOnly"),
                 )
             }
+            if (removed) {
+                GeckoCaptureDiagnostics.recordCookieChange(true)
+            } else if (array.length() > 1) {
+                GeckoCaptureDiagnostics.recordCookieDump(array.length())
+            } else {
+                GeckoCaptureDiagnostics.recordCookieChange(false)
+            }
+            Log.i(TAG, "cookies: ${cookies.size} (removed=$removed)")
             inspector.dispatch(InspectorMessage.EngineCookies(cookies, removed))
+        }
+    }
+
+    private fun handleStatus(json: JSONObject?) {
+        if (json == null) return
+        runCatching {
+            val rows = ArrayList<Pair<String, String>>(12)
+            fun put(label: String, value: Any?) {
+                if (value != null) rows += label to value.toString()
+            }
+            put("manifest version running", json.optString("manifestVersion").takeIf { it.isNotBlank() })
+            put("webRequest API present", json.optBoolean("webRequestApi"))
+            put("cookies API present", json.optBoolean("cookiesApi"))
+            val permissions = json.optJSONObject("permissions")
+            if (permissions != null) {
+                val keys = permissions.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = permissions.opt(key)
+                    put("permission $key", if (value is Boolean) value.toString() else value?.toString())
+                }
+            }
+            put("capture enabled (extension's view)", json.optBoolean("captureEnabled"))
+            put("response previews enabled", json.optBoolean("responsePreviewsEnabled"))
+            put("passive listeners attached", json.optBoolean("passiveListenersAttached"))
+            put("body-preview listener attached", json.optBoolean("bodyListenerAttached"))
+            put("pending requests in extension", json.optInt("pendingRequests"))
+            put("listener error", json.optString("listenerError").takeIf { it.isNotBlank() })
+            GeckoCaptureDiagnostics.recordStatus(rows)
+            Log.i(TAG, "extension status: ${rows.joinToString(", ") { "${it.first}=${it.second}" }}")
         }
     }
 
@@ -199,6 +244,10 @@ class GeckoNetworkCapture(
                     handleCookies(cookieArray(json.optJSONObject("cookie")), removed = true)
                     null
                 }
+                TYPE_CAPTURE_STATUS -> {
+                    handleStatus(json)
+                    null
+                }
                 else -> null
             }
         }
@@ -210,10 +259,16 @@ class GeckoNetworkCapture(
     companion object {
         const val UNKNOWN_TAB_ID = "unknown"
 
+        private const val TAG = "GeckoCapture"
+
         private const val TYPE_GET_SETTINGS = "get-capture-settings"
         private const val TYPE_NETWORK_RECORD = "network-record"
         private const val TYPE_COOKIES_DUMP = "cookies-dump"
         private const val TYPE_COOKIE_CHANGED = "cookie-changed"
         private const val TYPE_COOKIE_REMOVED = "cookie-removed"
+        private const val TYPE_CAPTURE_STATUS = "capture-status"
+
+        /** Diagnostics for the inspector's export (the CAPTURE SOURCE section). */
+        fun diagnostics(): List<Pair<String, String>> = GeckoCaptureDiagnostics.snapshot()
     }
 }

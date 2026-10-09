@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.example.data.DownloadRegistry
 import com.example.data.model.AutomationStep
+import com.example.devtools.InspectorController
 import com.example.devtools.InspectorRuntime
 import com.example.devtools.NullInspectorRuntime
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -154,6 +155,8 @@ class GeckoEngine(
         GeckoRuntimeManager.get(context)
         bridge.install(context)
         networkCapture.attach()
+        // The inspector's export prints where this engine's capture pipeline stands.
+        (inspector as? InspectorController)?.engineDiagnosticsProvider = { GeckoNetworkCapture.diagnostics() }
     }
 
     /** Re-registers the bridge on every live session, for when the extension finished loading late. */

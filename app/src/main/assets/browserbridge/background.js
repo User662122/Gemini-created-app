@@ -104,6 +104,58 @@
       responsePreviewsEnabled = previews;
       updateBodyListener();
     }
+    reportStatus();
+  }
+
+  // ------------------------------------------------------------------ self-diagnostics
+
+  // The app cannot see why capture is or is not working, so the extension says so itself:
+  // which APIs and permissions it actually has, which listeners are attached, and the manifest
+  // version actually running (an outdated installed copy would explain "nothing changed" after
+  // an upgrade). The app prints this in the inspector's export under CAPTURE SOURCE.
+  let lastListenerError = null;
+
+  function probePermissions() {
+    const checks = {};
+    const wanted = [
+      ["webRequest", { permissions: ["webRequest"] }],
+      ["webRequestBlocking", { permissions: ["webRequestBlocking"] }],
+      ["cookies", { permissions: ["cookies"] }],
+      ["allUrls", { origins: ["<all_urls>"] }]
+    ];
+    if (!browser.permissions || typeof browser.permissions.contains !== "function") {
+      wanted.forEach(function (entry) { checks[entry[0]] = null; });
+      return Promise.resolve(checks);
+    }
+    return Promise.all(
+      wanted.map(function (entry) {
+        return Promise.resolve(browser.permissions.contains(entry[1]))
+          .then(function (ok) { checks[entry[0]] = ok === true; })
+          .catch(function () { checks[entry[0]] = false; });
+      })
+    ).then(function () { return checks; });
+  }
+
+  function reportStatus() {
+    let manifestVersion = "";
+    try {
+      manifestVersion = String(browser.runtime.getManifest().version || "");
+    } catch (_) { /* getManifest unavailable */ }
+    probePermissions().then(function (permissions) {
+      send({
+        type: "capture-status",
+        manifestVersion: manifestVersion,
+        webRequestApi: typeof browser.webRequest === "object" && browser.webRequest !== null,
+        cookiesApi: typeof browser.cookies === "object" && browser.cookies !== null,
+        permissions: permissions,
+        captureEnabled: captureEnabled,
+        responsePreviewsEnabled: responsePreviewsEnabled,
+        passiveListenersAttached: passiveListenersAttached,
+        bodyListenerAttached: bodyListenerAttached,
+        pendingRequests: pending.size,
+        listenerError: lastListenerError
+      });
+    });
   }
 
   // ------------------------------------------------------------------ record assembly
@@ -305,21 +357,30 @@
   function updatePassiveListeners() {
     if (captureEnabled === passiveListenersAttached) return;
     const filter = { urls: ["<all_urls>"] };
-    if (captureEnabled) {
-      browser.webRequest.onBeforeRequest.addListener(onBeforeRequest, filter);
-      browser.webRequest.onBeforeSendHeaders.addListener(onBeforeSendHeaders, filter);
-      browser.webRequest.onHeadersReceived.addListener(onHeadersReceived, filter, ["responseHeaders"]);
-      browser.webRequest.onBeforeRedirect.addListener(onBeforeRedirect, filter, ["responseHeaders"]);
-      browser.webRequest.onCompleted.addListener(onCompleted, filter);
-      browser.webRequest.onErrorOccurred.addListener(onErrorOccurred, filter);
-    } else {
-      browser.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
-      browser.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeaders);
-      browser.webRequest.onHeadersReceived.removeListener(onHeadersReceived);
-      browser.webRequest.onBeforeRedirect.removeListener(onBeforeRedirect);
-      browser.webRequest.onCompleted.removeListener(onCompleted);
-      browser.webRequest.onErrorOccurred.removeListener(onErrorOccurred);
-      pending.clear();
+    try {
+      if (captureEnabled) {
+        browser.webRequest.onBeforeRequest.addListener(onBeforeRequest, filter);
+        // "requestHeaders" in extraInfoSpec is what makes details.requestHeaders populated at all;
+        // without it the listener fires but the headers are simply absent.
+        browser.webRequest.onBeforeSendHeaders.addListener(onBeforeSendHeaders, filter, ["requestHeaders"]);
+        browser.webRequest.onHeadersReceived.addListener(onHeadersReceived, filter, ["responseHeaders"]);
+        browser.webRequest.onBeforeRedirect.addListener(onBeforeRedirect, filter, ["responseHeaders"]);
+        browser.webRequest.onCompleted.addListener(onCompleted, filter);
+        browser.webRequest.onErrorOccurred.addListener(onErrorOccurred, filter);
+      } else {
+        browser.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
+        browser.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeaders);
+        browser.webRequest.onHeadersReceived.removeListener(onHeadersReceived);
+        browser.webRequest.onBeforeRedirect.removeListener(onBeforeRedirect);
+        browser.webRequest.onCompleted.removeListener(onCompleted);
+        browser.webRequest.onErrorOccurred.removeListener(onErrorOccurred);
+        pending.clear();
+      }
+      lastListenerError = null;
+    } catch (error) {
+      // Without webRequest (permission not granted, API missing) capture cannot work; say so
+      // instead of failing silently on every settings poll.
+      lastListenerError = String(error && error.message ? error.message : error);
     }
     passiveListenersAttached = captureEnabled;
   }
@@ -327,14 +388,19 @@
   function updateBodyListener() {
     if (responsePreviewsEnabled === bodyListenerAttached) return;
     const filter = { urls: ["<all_urls>"], types: BODY_PREVIEW_TYPES };
-    if (responsePreviewsEnabled) {
-      browser.webRequest.onHeadersReceived.addListener(
-        onHeadersReceivedBlocking,
-        filter,
-        ["blocking", "responseHeaders"]
-      );
-    } else {
-      browser.webRequest.onHeadersReceived.removeListener(onHeadersReceivedBlocking);
+    try {
+      if (responsePreviewsEnabled) {
+        browser.webRequest.onHeadersReceived.addListener(
+          onHeadersReceivedBlocking,
+          filter,
+          ["blocking", "responseHeaders"]
+        );
+      } else {
+        browser.webRequest.onHeadersReceived.removeListener(onHeadersReceivedBlocking);
+      }
+      lastListenerError = null;
+    } catch (error) {
+      lastListenerError = String(error && error.message ? error.message : error);
     }
     bodyListenerAttached = responsePreviewsEnabled;
   }
@@ -392,4 +458,5 @@
   pullSettings();
   setInterval(pullSettings, SETTINGS_POLL_MS);
   pushCookieDump();
+  reportStatus();
 })();

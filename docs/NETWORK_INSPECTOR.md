@@ -561,3 +561,23 @@ WebSocket frames, service-worker fetches, and private-tab traffic. Each of those
 boundary, not a missing feature of the app: Gecko's `webRequest` does not expose request bodies,
 content scripts live in an isolated world, WebSocket frames and service-worker fetches never reach
 `webRequest`, and the extension is not allowed in private browsing.
+
+### 13a. If the Gecko capture is empty: read CAPTURE SOURCE first
+
+An empty NETWORK tab under Gecko means the capture pipeline stopped somewhere, and the export now
+says where. Every export carries a **CAPTURE SOURCE** section (text and JSON) with one line per
+pipeline stage:
+
+| Line | Meaning when it is wrong |
+| --- | --- |
+| `Installed extension version` vs `Bundled extension version` | The profile still runs an older copy of the bridge extension — an in-place APK upgrade keeps the profile, so the new background script is not installed. The app detects this and forces one reinstall; if both lines still differ, clear the app's data once or reinstall. |
+| `Background-message delegate registered: no` | The app never registered the delegate that receives the extension's messages. |
+| `Capture settings pulls answered: 0` | The extension's settings pull never reached the app (or the app never started the Gecko engine). |
+| `Network records received: 0` (with pulls > 0) | The extension is not attaching listeners — check the extension's own report below the counters. |
+| `permission webRequest: false` (in the extension's report) | Gecko did not grant the built-in extension the `webRequest` permission — the capture cannot work at all. |
+| `listener error: …` (in the extension's report) | Attaching the listeners threw; the message says why. |
+| `manifest version running` | What the extension believes it is; compared with the bundled version above. |
+
+The same events are logged under the `GeckoCapture` tag, so `adb logcat -s GeckoCapture` shows the
+pipeline live. The counters are process-wide: they survive an activity recreation, so an export
+after a rotation still describes the whole session.
