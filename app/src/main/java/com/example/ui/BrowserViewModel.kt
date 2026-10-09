@@ -114,7 +114,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Starts or stops an explicit, local-only capture session. */
-    fun setNetworkRecording(enabled: Boolean) {
+    fun setNetworkCaptureEnabled(enabled: Boolean) {
         if (enabled && !isNetworkCaptureReady) return
         if (isNetworkRecording == enabled) return
         isNetworkRecording = enabled

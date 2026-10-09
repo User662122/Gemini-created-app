@@ -231,7 +231,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
             recording = viewModel.isNetworkRecording,
             captureError = viewModel.networkCaptureError,
             exportStatus = viewModel.networkExportStatus,
-            onRecordingChange = viewModel::setNetworkRecording,
+            onRecordingChange = viewModel::setNetworkCaptureEnabled,
             onClear = viewModel::clearNetworkLogs,
             onExport = { exportHarLauncher.launch("network-activity.har") },
             onDismiss = { showNetworkInspector = false },
