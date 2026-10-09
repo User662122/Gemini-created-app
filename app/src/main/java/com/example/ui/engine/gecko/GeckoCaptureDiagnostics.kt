@@ -44,6 +44,10 @@ object GeckoCaptureDiagnostics {
     @Volatile
     var lastError: String? = null
 
+    /** `extensions.webextensions.remote` read back from Gecko (value/default/user). */
+    @Volatile
+    var extensionProcessPref: String? = null
+
     fun recordSettingsPull(enabled: Boolean?) {
         settingsPulls.incrementAndGet()
         lastSettingsReplyEnabled = enabled
@@ -83,6 +87,9 @@ object GeckoCaptureDiagnostics {
             )
         rows += "Bundled extension version" to GeckoRuntimeManager.BRIDGE_EXTENSION_VERSION
         rows += "Background-message delegate registered" to (if (delegateRegistered) "yes" else "no")
+        extensionProcessPref?.let {
+            rows += "extensions.webextensions.remote (read back from Gecko)" to it
+        }
         rows += "Capture settings pulls answered" to settingsPulls.get().toString()
         rows += "Last settings reply (capture enabled)" to (lastSettingsReplyEnabled?.toString() ?: "—")
         rows += "Network records received" to recordsReceived.get().toString()

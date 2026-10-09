@@ -9,6 +9,7 @@ import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.mozilla.geckoview.GeckoPreferenceController
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.StorageController
@@ -70,6 +71,9 @@ object GeckoRuntimeManager {
 
     private const val BRIDGE_EXTENSION_ASSETS = "resource://android/assets/browserbridge/"
 
+    /** The pref behind [GeckoRuntimeSettings.Builder.extensionsProcessEnabled]. */
+    const val PREF_EXTENSIONS_REMOTE = "extensions.webextensions.remote"
+
     private const val TAG = "GeckoCapture"
 
     @Volatile
@@ -118,6 +122,13 @@ object GeckoRuntimeManager {
                     .build()
             ).also { created ->
                 runtime = created
+                // The builder value travels to Gecko as a *default* pref via MOZ_DEFAULT_PREFS at
+                // startup. Commit it again through the runtime settings as well: that path reaches
+                // Gecko while it is already running, so a pref that was somehow missed at startup
+                // still lands. Both paths are idempotent.
+                runCatching { created.settings.setExtensionsProcessEnabled(true) }
+                runCatching { created.settings.setExtensionsWebAPIEnabled(true) }
+                logExtensionProcessPref(created)
                 // If the extension process is ever killed beyond Gecko's crash threshold, spawning
                 // stays disabled until this is called again — the background script would silently
                 // stop coming back. Firefox for Android re-arms it the same way.
@@ -209,6 +220,33 @@ object GeckoRuntimeManager {
                 Log.e(TAG, "registering the background-message delegate failed", error)
             }
         }
+    }
+
+    /**
+     * Reads `extensions.webextensions.remote` back from Gecko and logs it, so the CAPTURE SOURCE
+     * section of an inspector export can say whether the pref that lets an extension's background
+     * script run actually took effect — the difference between "the app set it" and "Gecko has it".
+     */
+    private fun logExtensionProcessPref(created: GeckoRuntime) {
+        GeckoPreferenceController.getGeckoPref(PREF_EXTENSIONS_REMOTE).accept(
+            { pref ->
+                // GeckoPreference<T> is generic and the result is a wildcard, so read the
+                // Boolean-typed accessor explicitly rather than guessing the type parameter.
+                val typed = pref as? GeckoPreferenceController.GeckoPreference<Boolean>
+                val valueText = typed?.value?.toString() ?: "?"
+                GeckoCaptureDiagnostics.extensionProcessPref =
+                    "value=$valueText default=${pref?.defaultValue ?: "?"} user=${pref?.userValue ?: "—"}"
+                Log.i(
+                    TAG,
+                    "extensions.webextensions.remote: value=$valueText " +
+                        "default=${pref?.defaultValue ?: "?"} user=${pref?.userValue ?: "—"}"
+                )
+            },
+            { error ->
+                GeckoCaptureDiagnostics.extensionProcessPref = "unreadable: ${error?.message}"
+                Log.w(TAG, "could not read extensions.webextensions.remote: ${error?.message}")
+            }
+        )
     }
 
     /**
