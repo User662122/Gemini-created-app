@@ -35,7 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.foundation.text.SelectionContainer
+import androidx.compose.foundation.text.selection.SelectionContainer
 
 @Composable
 fun NetworkInspectorDialog(

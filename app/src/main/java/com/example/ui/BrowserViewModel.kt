@@ -155,16 +155,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             { extension ->
                 runOnMain {
                     if (isViewModelCleared) return@runOnMain
-                    networkExtension = extension
-                    extension.setMessageDelegate(networkMessageDelegate, NETWORK_NATIVE_APP)
-                    networkCaptureError = null
+                    if (extension == null) {
+                        networkCaptureError = "Network capture could not start: GeckoView returned no extension."
+                    } else {
+                        networkExtension = extension
+                        extension.setMessageDelegate(networkMessageDelegate, NETWORK_NATIVE_APP)
+                        networkCaptureError = null
+                    }
                 }
             },
             { error ->
                 runOnMain {
                     if (isViewModelCleared) return@runOnMain
                     isNetworkCaptureReady = false
-                    networkCaptureError = "Network capture could not start: ${error.localizedMessage ?: "GeckoView extension installation failed"}"
+                    networkCaptureError = "Network capture could not start: ${error?.localizedMessage ?: "GeckoView extension installation failed"}"
                 }
             },
         )
