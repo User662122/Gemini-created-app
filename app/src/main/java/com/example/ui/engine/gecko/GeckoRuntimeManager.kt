@@ -106,8 +106,12 @@ object GeckoRuntimeManager {
             .ensureBuiltIn(BRIDGE_EXTENSION_ASSETS, BRIDGE_EXTENSION_ID)
             .accept(
                 { extension ->
-                    _bridgeExtension.value = extension
-                    registerExtensionMessageDelegate(extension)
+                    if (extension != null) {
+                        _bridgeExtension.value = extension
+                        registerExtensionMessageDelegate(extension)
+                    } else {
+                        _bridgeError.value = "the bridge extension did not load"
+                    }
                 },
                 { error -> _bridgeError.value = error?.message ?: "the bridge extension did not load" }
             )
