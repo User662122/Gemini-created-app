@@ -50,7 +50,8 @@ android {
     abi {
       isEnable = true
       reset()
-      include("arm64-v8a", "armeabi-v7a", "x86_64")
+      // Ship one 32-bit APK only; there are no arm64 or x86_64 builds.
+      include("armeabi-v7a")
       isUniversalApk = false
     }
   }
