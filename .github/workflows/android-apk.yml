@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - arena/8b7bbf86-gemini-created-app
+      - arena/4b11b9dc-gemini-created-app
   pull_request:
     branches:
       - arena/8b7bbf86-gemini-created-app
+      - arena/4b11b9dc-gemini-created-app
   workflow_dispatch:
 
 permissions:
@@ -77,7 +79,7 @@ jobs:
           retention-days: 14
 
       - name: Publish phone APK release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/arena/8b7bbf86-gemini-created-app'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -95,7 +97,7 @@ jobs:
           gh release upload "$tag" "$asset" --clobber
 
       - name: Publish emulator APK release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/arena/8b7bbf86-gemini-created-app'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
