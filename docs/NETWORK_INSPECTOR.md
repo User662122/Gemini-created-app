@@ -574,6 +574,7 @@ pipeline stage:
 | `Background-message delegate registered: no` | The app never registered the delegate that receives the extension's messages. |
 | `Capture settings pulls answered: 0` | The extension's settings pull never reached the app (or the app never started the Gecko engine). The most common cause: **the background script is not running at all** — Gecko only spawns an extension's background process when `extensionsProcessEnabled(true)` is set on the runtime (it defaults to false; content scripts keep working without it, which is what makes this confusing). The app sets it; if this row is 0, check that the runtime was created with it. |
 | `Extension status reports: 0` | Same cause as above: the background script never started, so it never reported anything. |
+| Everything above looks fine but records stay 0 | Check which APK the device actually runs: an in-place upgrade installs the new build, but a build published *after* the device downloaded is not on it. The release notes print the exact commit each APK was built from — compare it with the commit that carried the fix. |
 | `Network records received: 0` (with pulls > 0) | The extension is not attaching listeners — check the extension's own report below the counters. |
 | `permission webRequest: false` (in the extension's report) | Gecko did not grant the built-in extension the `webRequest` permission — the capture cannot work at all. |
 | `listener error: …` (in the extension's report) | Attaching the listeners threw; the message says why. |

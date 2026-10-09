@@ -41,6 +41,13 @@ them. Same app, 2.3× less to download.
 
 ## Upgrades
 
+**Always check the commit in the release notes before re-testing a fix.** The release notes print the
+exact commit each APK was built from (`Build: commit …`). A device that downloaded the previous APK
+keeps running the previous code even after a newer release exists — the classic "I installed the
+update and nothing changed" that is really "I installed the update from before the update". When a
+fix is not behaving, compare the device's APK commit with the fix's commit first; if they differ,
+download again.
+
 Two things decide whether a new build installs over the old one:
 
 1. **The signing key.** Android refuses to install an app signed by a different key than the installed
