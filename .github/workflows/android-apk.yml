@@ -1,4 +1,4 @@
-name: Build Android browser
+name: Build Gecko browser
 
 on:
   push:
@@ -46,7 +46,27 @@ jobs:
           done
 
       - name: Build and test
-        run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
+        run: |
+          mkdir -p app/build
+          set -o pipefail
+          gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee app/build/ci-build.log
+
+      - name: Report build failure
+        if: failure()
+        run: |
+          if [ -f app/build/ci-build.log ]; then
+            {
+              echo "## Gradle build failure details"
+              echo '```text'
+              tail -n 180 app/build/ci-build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            while IFS= read -r line; do
+              case "$line" in
+                e:*|*"What went wrong"*|*"Execution failed"*) echo "::error title=Gradle failure::$line" ;;
+              esac
+            done < app/build/ci-build.log
+          fi
 
       - name: Upload debug APKs
         uses: actions/upload-artifact@v4
