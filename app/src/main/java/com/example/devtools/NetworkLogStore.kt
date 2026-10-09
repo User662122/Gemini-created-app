@@ -295,6 +295,13 @@ class NetworkLogStore {
     /** Cookie scopes learned from responses, newest last. */
     fun cookieObservations(): List<CookieRecord> = synchronized(lock) { ArrayList(observedCookies) }
 
+    /** Drops one remembered cookie scope (the engine's cookie store reported it removed). */
+    fun removeCookieObservation(id: String) {
+        synchronized(lock) {
+            if (observedCookies.removeIf { it.id == id }) revisionCounter++
+        }
+    }
+
     /**
      * Marks requests older than [cutoffAppMillis] that still wait for a response as
      * [EntryState.UNOBSERVED], attaching the explanation built by [note].

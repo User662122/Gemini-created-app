@@ -1,5 +1,8 @@
 package com.example.devtools
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -573,6 +576,214 @@ class LiveNetworkObserver(
             val key = iterator.next()
             if (key.startsWith("$tabId/")) requestIdBuckets.remove(key)
         }
+    }
+
+    // --------------------------------------------------------------------- engine (Gecko) input
+
+    /**
+     * One HTTP exchange as the embedded engine's `webRequest` saw it.
+     *
+     * This is the engine's replacement for `shouldInterceptRequest`: Gecko exposes no request
+     * interception to embedders, but its extensions see every request on the wire — full header
+     * sets, status for every response (not just 4xx/5xx), redirect hops, timing, and (for text-ish
+     * resources, when enabled) a streamed body preview. The record arrives complete, so it is fed
+     * through the same two observer methods the WebView path uses and lands in the same rows, with
+     * the same masking, classification and correlation.
+     */
+    override fun onEngineRequest(record: EngineRequestRecord) {
+        val policy = capturePolicy()
+        if (!policy.enabled) return
+        if (!isHttpUrl(record.url)) return
+
+        val request = RequestObservation(
+            tabId = record.tabId,
+            url = record.url,
+            method = record.method.ifBlank { UNKNOWN_METHOD },
+            observedAtMillis = System.currentTimeMillis(),
+            timeSource = EvidenceSource.APP_CLOCK,
+            isForMainFrame = record.isMainFrame,
+            isRedirect = record.redirectedFrom != null,
+            hasGesture = null,
+            headers = record.requestHeaders,
+            headersReport = HeadersReport.ENGINE_WEB_REQUEST,
+            initiator = if (record.isMainFrame) Initiator.DOCUMENT_NAVIGATION else Initiator.RESOURCE_LOAD,
+            observedVia = EvidenceSource.ENGINE_WEB_REQUEST,
+            // Gecko's webRequest does not expose request bodies, and the page hooks cannot run in
+            // Gecko (the content script lives in an isolated world), so this says so rather than
+            // showing an empty body.
+            body = BodyRecord(
+                preview = InspectorValue.unknown(InspectorExplanations.ENGINE_REQUEST_BODY_UNAVAILABLE),
+                kind = BodyKind.UNKNOWN,
+            ),
+        )
+        onRequestStarted(request)
+
+        val notes = ArrayList<String>(3)
+        if (record.redirectedFrom != null) {
+            notes += "Redirect hop: the engine reports this request was redirected to from " +
+                "${record.redirectedFrom}."
+        }
+        if (record.redirectedTo != null && record.statusCode != null && record.statusCode in 300..399) {
+            notes += "Redirected to ${record.redirectedTo} (HTTP ${record.statusCode})."
+        }
+        if (notes.isNotEmpty()) {
+            val key = keyFor(record.url, request.method, policy)
+            val pending = store.findEntry(record.tabId, key, skipPageObserved = false, maxScan = 5)
+            if (pending != null) {
+                store.updateEntry(pending.id) { entry ->
+                    entry.copy(notes = entry.notes + notes)
+                }
+            }
+        }
+
+        val failure = record.error
+        if (failure != null) {
+            onRequestFailed(
+                FailureObservation(
+                    tabId = record.tabId,
+                    url = record.url,
+                    description = "The engine reported a network-level failure: $failure",
+                    errorCode = null,
+                    isForMainFrame = record.isMainFrame,
+                    method = request.method,
+                    observedAtMillis = System.currentTimeMillis(),
+                )
+            )
+            return
+        }
+
+        val contentType = record.responseHeaders.entries
+            .firstOrNull { it.key.equals("content-type", ignoreCase = true) }
+            ?.value
+        onResponseReceived(
+            ResponseObservation(
+                tabId = record.tabId,
+                url = record.url,
+                method = request.method,
+                statusCode = record.statusCode,
+                reasonPhrase = null,
+                statusSource = EvidenceSource.ENGINE_WEB_REQUEST,
+                headers = record.responseHeaders,
+                headersReport = HeadersReport.ENGINE_WEB_REQUEST,
+                contentType = contentType,
+                observedAtMillis = System.currentTimeMillis(),
+                timeSource = EvidenceSource.APP_CLOCK,
+                durationMillis = record.durationMillis,
+                isForMainFrame = record.isMainFrame,
+                observedVia = EvidenceSource.ENGINE_WEB_REQUEST,
+                body = engineBodyRecord(record, policy),
+            )
+        )
+    }
+
+    /**
+     * The engine's cookie store (Gecko's `cookies` API), which — unlike WebView's `CookieManager` —
+     * reports every attribute: domain, path, Secure, HttpOnly and expiry.
+     *
+     * The engine pushes the full store when its background script starts and one record per
+     * `cookies.onChanged` event afterwards; [removed] distinguishes the two shapes. Values are
+     * masked here, at capture time, exactly like every other source.
+     */
+    override fun onEngineCookies(cookies: List<EngineCookie>, removed: Boolean) {
+        val policy = capturePolicy()
+        if (!policy.enabled) return
+        for (cookie in cookies) {
+            val id = "engine:${cookie.domain}:${cookie.path}:${cookie.name}"
+            if (removed) {
+                store.removeCookieObservation(id)
+                continue
+            }
+            val url = "https://" + cookie.domain.trimStart('.') + "/"
+            val expiryLabel = cookie.expirationDate?.let { epochSeconds ->
+                SimpleDateFormat("yyyy-MM-dd HH:mm:ss 'UTC'", Locale.US)
+                    .format(Date(epochSeconds * 1000L))
+            } ?: "session cookie"
+            store.addCookieObservation(
+                CookieRecord(
+                    id = id,
+                    name = cookie.name,
+                    value = InspectorValue.known(
+                        Redaction.cookieValue(cookie.value, policy.revealSensitiveValues),
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        if (policy.revealSensitiveValues) {
+                            "Full capture is on: the cookie value is stored exactly as the engine " +
+                                "reports it."
+                        } else {
+                            InspectorExplanations.COOKIE_MASKED
+                        },
+                    ),
+                    domain = InspectorValue.known(
+                        cookie.domain,
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        if (cookie.hostOnly) {
+                            "Host-only cookie: Gecko reports no leading dot, so it is scoped to exactly " +
+                                "this host."
+                        } else {
+                            "Domain attribute reported by the engine's cookie store."
+                        },
+                    ),
+                    path = InspectorValue.known(
+                        cookie.path,
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        "Path attribute reported by the engine's cookie store.",
+                    ),
+                    secure = InspectorValue.known(
+                        cookie.secure,
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        "Secure flag reported by the engine's cookie store.",
+                    ),
+                    httpOnly = InspectorValue.known(
+                        cookie.httpOnly,
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        "HttpOnly flag reported by the engine's cookie store.",
+                    ),
+                    expiration = InspectorValue.known(
+                        expiryLabel,
+                        EvidenceSource.ENGINE_COOKIE_STORE,
+                        if (cookie.session) {
+                            "Session cookie: the engine reports no expiry date."
+                        } else {
+                            "Expiry reported by the engine's cookie store, rendered as declared."
+                        },
+                    ),
+                    observedForUrl = Redaction.displayUrl(
+                        url,
+                        maskSensitiveParams = !policy.revealSensitiveValues,
+                    ),
+                    sources = setOf(EvidenceSource.ENGINE_COOKIE_STORE),
+                    notes = listOfNotNull(
+                        cookie.sameSite?.let { "SameSite=$it was reported by the engine's cookie store." },
+                    ),
+                )
+            )
+        }
+        cookieEventsSinceCheck.addAndGet(cookies.size.toLong())
+        onCookieStoreChanged?.invoke()
+    }
+
+    private fun engineBodyRecord(record: EngineRequestRecord, policy: CapturePolicy): BodyRecord? {
+        val preview = record.bodyPreview ?: return null
+        if (!policy.captureResponseBodies) {
+            return BodyRecord(
+                preview = InspectorValue.unknown(InspectorExplanations.ENGINE_BODY_NOT_CAPTURED),
+                kind = BodyKind.UNKNOWN,
+            )
+        }
+        val scrubbed = Redaction.scrubText(
+            preview,
+            InspectorLimits.MAX_ENGINE_BODY_PREVIEW_CHARS,
+            policy.revealSensitiveValues,
+        )
+        return BodyRecord(
+            preview = InspectorValue.known(scrubbed.text, EvidenceSource.ENGINE_WEB_REQUEST),
+            kind = BodyKind.TEXT,
+            truncated = record.bodyTruncated || scrubbed.text.length < preview.length,
+        )
+    }
+
+    private fun isHttpUrl(url: String): Boolean {
+        val scheme = UrlParts.scheme(url)
+        return scheme == "http" || scheme == "https"
     }
 
     // ------------------------------------------------------------------------------ entry building

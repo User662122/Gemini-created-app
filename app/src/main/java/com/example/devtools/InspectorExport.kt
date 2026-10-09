@@ -57,6 +57,8 @@ object InspectorExport {
         droppedByPageScript: Long,
         sessionStartedAtMillis: Long = 0L,
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
+        capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
+        capabilitiesTitle: String = "WHAT WEBVIEW LETS THIS APP OBSERVE",
     ): String {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
         return when (format) {
@@ -70,6 +72,8 @@ object InspectorExport {
                 droppedByPageScript = droppedByPageScript,
                 sessionStartedAtMillis = sessionStartedAtMillis,
                 incidents = incidents,
+                capabilities = capabilities,
+                capabilitiesTitle = capabilitiesTitle,
             )
 
             ExportFormat.JSON -> json(
@@ -83,6 +87,7 @@ object InspectorExport {
                 reveal = reveal,
                 sessionStartedAtMillis = sessionStartedAtMillis,
                 incidents = incidents,
+                capabilities = capabilities,
             ).toString(2)
         }
     }
@@ -103,6 +108,8 @@ object InspectorExport {
         droppedByPageScript: Long,
         sessionStartedAtMillis: Long = 0L,
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
+        capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
+        capabilitiesTitle: String = "WHAT WEBVIEW LETS THIS APP OBSERVE",
     ): String = buildString {
         val reveal = settings[InspectorSetting.FULL_CAPTURE] == true
 
@@ -149,8 +156,8 @@ object InspectorExport {
             appendLine("  ${setting.title}: ${settings[setting] == true}")
         }
         appendLine()
-        appendLine("WHAT WEBVIEW LETS THIS APP OBSERVE")
-        InspectorExplanations.CAPABILITY_SUMMARY.forEach { (label, available) ->
+        appendLine(capabilitiesTitle)
+        capabilities.forEach { (label, available) ->
             appendLine("  [${if (available) "yes" else "no "}] $label")
         }
 
@@ -222,6 +229,7 @@ object InspectorExport {
         reveal: Boolean,
         sessionStartedAtMillis: Long = 0L,
         incidents: List<Pair<IncidentKind, Int>> = emptyList(),
+        capabilities: List<Pair<String, Boolean>> = InspectorExplanations.CAPABILITY_SUMMARY_WEBVIEW,
     ): JSONObject = JSONObject().apply {
         put("exportedAtMillis", exportedAtMillis)
         put("captureMode", if (reveal) "full" else "masked")
@@ -263,7 +271,7 @@ object InspectorExport {
         })
 
         put("capabilities", JSONArray().apply {
-            InspectorExplanations.CAPABILITY_SUMMARY.forEach { (label, available) ->
+            capabilities.forEach { (label, available) ->
                 put(JSONObject().apply {
                     put("capability", label)
                     put("available", available)

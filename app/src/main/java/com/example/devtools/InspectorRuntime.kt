@@ -39,6 +39,10 @@ sealed class InspectorMessage {
     data class DocumentFinished(val tabId: String, val url: String?, val title: String?) : InspectorMessage()
     data class CookieStoreChanged(val url: String?) : InspectorMessage()
     data class WebViewDestroyed(val tabId: String) : InspectorMessage()
+    /** One HTTP exchange as the embedded engine's webRequest saw it. */
+    data class EngineRequest(val record: EngineRequestRecord) : InspectorMessage()
+    /** The embedded engine's cookie store: a full dump, or one changed/removed cookie. */
+    data class EngineCookies(val cookies: List<EngineCookie>, val removed: Boolean) : InspectorMessage()
 }
 
 /**
@@ -56,6 +60,14 @@ interface InspectorRuntime {
 
     /** True while the inspector is capturing. */
     val enabled: Boolean
+
+    /**
+     * The capture switches as one immutable snapshot. The Gecko engine's capture channel reads this
+     * to answer the bridge extension's settings pull, so the extension attaches its listeners only
+     * while capture is actually on (and never in a release build, where this is
+     * [CapturePolicy.DISABLED]).
+     */
+    fun capturePolicy(): CapturePolicy
 
     /** Changes whenever the injected script must be re-evaluated (settings changes). */
     val scriptToken: Long
@@ -111,6 +123,7 @@ object NullInspectorRuntime : InspectorRuntime {
 
     override val observer: NetworkObserver = NullNetworkObserver
     override val enabled: Boolean = false
+    override fun capturePolicy(): CapturePolicy = CapturePolicy.DISABLED
     override val scriptToken: Long = 0L
     override val uiState: StateFlow<InspectorUiState> = emptyState
 

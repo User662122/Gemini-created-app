@@ -116,9 +116,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * See docs/ENGINE_MIGRATION.md.
      */
     private val enginePreferences =
-        application.getSharedPreferences("browser_engine", Context.MODE_PRIVATE)
+        application.getSharedPreferences(BrowserEngineKind.PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    private val _engineKind = MutableStateFlow(BrowserEngineKind.fromStorage(enginePreferences.getString("kind", null)))
+    private val _engineKind = MutableStateFlow(
+        BrowserEngineKind.fromStorage(enginePreferences.getString(BrowserEngineKind.KEY_KIND, null))
+    )
     val engineKind: StateFlow<BrowserEngineKind> = _engineKind.asStateFlow()
 
     /** Where downloads are recorded. Owned here so the list survives tab and screen changes. */
@@ -724,7 +726,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setEngineKind(kind: BrowserEngineKind) {
-        enginePreferences.edit().putString("kind", kind.storageValue).apply()
+        enginePreferences.edit().putString(BrowserEngineKind.KEY_KIND, kind.storageValue).apply()
         _engineKind.value = kind
     }
 

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.devtools.BodyRecord
 import com.example.devtools.EntryState
+import com.example.ui.engine.BrowserEngineKind
 import com.example.devtools.EvidenceSource
 import com.example.devtools.InspectorExplanations
 import com.example.devtools.InspectorValue
@@ -327,18 +328,27 @@ fun bodySizeLabel(body: BodyRecord?): String? {
     return if (length < 1024) "$length chars (as reported)" else "%.1f KB (as reported)".format(length / 1024.0)
 }
 
-/** The "what this tool can and cannot see" panel, shared by the settings tab and the report. */
+/**
+ * The "what this tool can and cannot see" panel, shared by the settings tab and the report.
+ *
+ * The rows describe the engine that is actually capturing, so the panel is honest under both engines
+ * (Gecko's rows differ from WebView's in both directions).
+ */
 @Composable
-fun CapabilitySummary() {
+fun CapabilitySummary(engine: BrowserEngineKind = BrowserEngineKind.WEBVIEW) {
+    val title = when (engine) {
+        BrowserEngineKind.GECKO -> "What the Gecko engine lets this app observe"
+        BrowserEngineKind.WEBVIEW -> "What WebView lets this app observe"
+    }
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         Text(
-            text = "What WebView lets this app observe",
+            text = title,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(modifier = Modifier.height(4.dp))
-        InspectorExplanations.CAPABILITY_SUMMARY.forEach { (line, supported) ->
+        InspectorExplanations.capabilitySummary(engine).forEach { (line, supported) ->
             Row(
                 modifier = Modifier.padding(vertical = 1.dp),
                 verticalAlignment = Alignment.Top,

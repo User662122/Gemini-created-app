@@ -5,6 +5,8 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.example.data.DownloadRegistry
 import com.example.data.model.AutomationStep
+import com.example.devtools.InspectorRuntime
+import com.example.devtools.NullInspectorRuntime
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -65,6 +67,10 @@ class GeckoEngine(
     onCloseTab: (String) -> Unit,
     /** A load or content-process failure, for the developer inspector: (tabId, url, why, code). */
     onLoadFailure: (String, String?, String, Int) -> Unit = { _, _, _, _ -> },
+    /** The developer inspector, fed by [GeckoNetworkCapture] under this engine. */
+    inspector: InspectorRuntime = NullInspectorRuntime,
+    /** The app's tab ids mapped to their current URLs; used to attribute captured requests. */
+    tabUrls: () -> Map<String, String> = { emptyMap() },
 ) {
 
     val promptHost = GeckoPromptHost()
@@ -73,6 +79,13 @@ class GeckoEngine(
         onRecordedStep = onRecordedStep,
         onPageError = onPageError,
     )
+
+    /**
+     * The Network Inspector's capture channel: Gecko's `webRequest`/`cookies` observations,
+     * relayed by the bridge extension's background script. Inert in release builds, where
+     * [inspector] is [NullInspectorRuntime] and the extension attaches no listeners.
+     */
+    private val networkCapture = GeckoNetworkCapture(inspector, tabUrls)
 
     private val downloads = GeckoDownloader(
         context = context,
@@ -140,6 +153,7 @@ class GeckoEngine(
     fun start() {
         GeckoRuntimeManager.get(context)
         bridge.install(context)
+        networkCapture.attach()
     }
 
     /** Re-registers the bridge on every live session, for when the extension finished loading late. */

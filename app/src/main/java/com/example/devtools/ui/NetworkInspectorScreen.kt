@@ -63,6 +63,7 @@ import com.example.devtools.InspectorSetting
 import com.example.devtools.InspectorUiState
 import com.example.devtools.ResourceCategory
 import com.example.devtools.StatusFilter
+import com.example.ui.engine.BrowserEngineKind
 import com.example.devtools.ui.theme.InspectorAmber
 import com.example.devtools.ui.theme.InspectorGreen
 import com.example.devtools.ui.theme.InspectorGrey
@@ -310,6 +311,7 @@ fun NetworkInspectorScreen(
                             onClearAll = onClearAll,
                             onEndSession = onEndSession,
                             onExport = { format -> saveExport(format) },
+                            engine = BrowserEngineKind.current(context),
                         )
                     }
                 }

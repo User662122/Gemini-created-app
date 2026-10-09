@@ -32,6 +32,12 @@ enum class EvidenceSource(val label: String) {
     /** Captured by an HTTP client owned by the app (optional hook, see [CookieInspector]). */
     APP_HTTP_CLIENT("app HTTP client"),
 
+    /** Reported by the embedded engine's `webRequest` observation (Gecko's WebExtension API). */
+    ENGINE_WEB_REQUEST("engine webRequest"),
+
+    /** Read from the embedded engine's cookie store (Gecko's `cookies` WebExtension API). */
+    ENGINE_COOKIE_STORE("engine cookie store"),
+
     /** Timestamp taken by this app's own clock (`System.currentTimeMillis`). */
     APP_CLOCK("app clock"),
 
@@ -146,6 +152,12 @@ enum class HeaderCompleteness(val label: String, val explanation: String) {
         "complete (app HTTP client)",
         "These headers come from an HTTP client this app controls, so the set is complete as sent " +
             "by that client. This request did not come from the WebView.",
+    ),
+    FROM_ENGINE_WEB_REQUEST(
+        "complete (engine webRequest)",
+        "These headers come from the embedded engine's webRequest observation, which sees the " +
+            "full header set as it went on the wire — including headers the platform adds itself " +
+            "(Cookie, User-Agent, Sec-*).",
     ),
     UNKNOWN(
         "unknown",
@@ -375,6 +387,14 @@ object InspectorLimits {
 
     /** Request body preview size. */
     const val MAX_BODY_PREVIEW_CHARS = 2_000
+
+    /**
+     * Response body preview size for bodies the *engine* streams to the app (Gecko's
+     * `webRequest.filterResponseData`). Larger than the page-hook preview because the engine hands
+     * over the real document or script — 8 KB still shows the head of a chatbot bundle or an HTML
+     * error page, which is what a debugging preview is for.
+     */
+    const val MAX_ENGINE_BODY_PREVIEW_CHARS = 8_192
 
     /** Console message size. */
     const val MAX_CONSOLE_MESSAGE_CHARS = 4_000

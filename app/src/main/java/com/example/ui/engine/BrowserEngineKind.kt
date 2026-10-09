@@ -22,8 +22,17 @@ enum class BrowserEngineKind(val storageValue: String, val displayName: String) 
     WEBVIEW("webview", "Android WebView (system)");
 
     companion object {
+        const val PREFERENCES_NAME = "browser_engine"
+        const val KEY_KIND = "kind"
+
         fun fromStorage(value: String?): BrowserEngineKind =
             entries.firstOrNull { it.storageValue == value } ?: GECKO
+
+        /** The engine selected in Settings, read straight from its store. */
+        fun current(context: Context): BrowserEngineKind = fromStorage(
+            context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_KIND, null)
+        )
     }
 }
 

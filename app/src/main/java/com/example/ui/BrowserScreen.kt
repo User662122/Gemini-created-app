@@ -139,6 +139,13 @@ fun BrowserScreen(
                     )
                 )
             },
+            // The inspector's capture channel under this engine: the bridge extension reports every
+            // request and the cookie store to it. Tab URLs attribute requests to tabs.
+            inspector = inspector,
+            tabUrls = {
+                val state = viewModel.uiState.value
+                (state.regularTabs + state.incognitoTabs).associate { it.id to it.url }
+            },
         )
     }
 

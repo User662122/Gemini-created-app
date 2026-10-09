@@ -1,12 +1,15 @@
 {
   "manifest_version": 2,
   "name": "Browser Bridge",
-  "version": "1.0",
-  "description": "Connects this browser's pages to the app itself: automation recording, automation playback and uncaught page errors.",
+  "version": "1.1",
+  "description": "Connects this browser's pages and network traffic to the app itself: automation recording, automation playback, uncaught page errors, network capture and the cookie store.",
   "browser_specific_settings": {
     "gecko": {
       "id": "browserbridge@example.com"
     }
+  },
+  "background": {
+    "scripts": ["background.js"]
   },
   "content_scripts": [
     {
@@ -19,6 +22,10 @@
   "permissions": [
     "nativeMessaging",
     "nativeMessagingFromContent",
-    "geckoViewAddons"
+    "geckoViewAddons",
+    "webRequest",
+    "webRequestBlocking",
+    "cookies",
+    "<all_urls>"
   ]
 }

@@ -1,5 +1,7 @@
 package com.example.devtools
 
+import com.example.ui.engine.BrowserEngineKind
+
 /**
  * Every "this field is not available, and here is why" string the inspector can show.
  *
@@ -23,6 +25,17 @@ object InspectorExplanations {
         "Not available: response bodies are not copied by default. Enable \"Capture response body " +
             "previews\" to read them from the page's own fetch()/XMLHttpRequest responses (needs page " +
             "JavaScript); WebView itself never hands the app a response body it did not request."
+
+    const val ENGINE_REQUEST_BODY_UNAVAILABLE =
+        "Not available under the embedded Gecko engine: its webRequest observation reports every " +
+            "request on the wire but not the body, and the page hooks that capture bodies in the " +
+            "WebView engine cannot run there (a Gecko content script lives in an isolated world). " +
+            "The request's headers, timing and destination are still recorded in full."
+
+    const val ENGINE_BODY_NOT_CAPTURED =
+        "Not captured: the engine streams response bodies only while \"Capture response body " +
+            "previews\" is on, and only for text-like resources (documents, scripts, stylesheets, " +
+            "XHR) — binary resources are never previewed as text."
 
     const val REASON_PHRASE_UNAVAILABLE =
         "Not available: WebView reports the numeric status, but not the HTTP reason phrase, for " +
@@ -192,7 +205,7 @@ object InspectorExplanations {
     /**
      * The short, user-facing capability summary shown at the top of the inspector and in the report.
      */
-    val CAPABILITY_SUMMARY: List<Pair<String, Boolean>> = listOf(
+    val CAPABILITY_SUMMARY_WEBVIEW: List<Pair<String, Boolean>> = listOf(
         "Request URL and method, with timestamps" to true,
         "Request headers, as the subset WebView exposes" to true,
         "Request bodies passed to fetch/XHR/sendBeacon by the page" to true,
@@ -212,4 +225,45 @@ object InspectorExplanations {
         "Requests served from cache with no callback" to false,
         "Anything at all in a release build" to false,
     )
+
+    /**
+     * What the Gecko engine lets this app observe. Gecko exposes no request interception to
+     * embedders, but its extensions see the wire: the bridge extension's `webRequest` and `cookies`
+     * APIs feed the inspector. Compared to WebView this is *more* in some rows (complete header sets,
+     * every status, redirect hops, full cookie attributes) and less in others (no request bodies, no
+     * console.log — a Gecko content script lives in an isolated world and cannot hook the page).
+     */
+    val CAPABILITY_SUMMARY_GECKO: List<Pair<String, Boolean>> = listOf(
+        "Request URL and method, with timestamps" to true,
+        "Complete request and response header sets, as they went on the wire" to true,
+        "Request bodies passed to fetch/XHR/sendBeacon by the page" to false,
+        "Sensitive values unmasked while \"Reveal sensitive values\" is on" to true,
+        "HTTP status for every response, including 2xx/3xx" to true,
+        "Response headers and Content-Type for every response" to true,
+        "Response body previews for text-like resources (documents, scripts, stylesheets, XHR)" to true,
+        "Redirect chains, each hop recorded with its status" to true,
+        "Cookie scope (domain/path/flags/expiry) for every cookie in the engine's store" to true,
+        "Cookie values, masked or revealed per the capture mode" to true,
+        "Uncaught JavaScript errors, reported by the page bridge" to true,
+        "console.log/warn/error from the page" to false,
+        "Renderer death, refused TLS certificates and stalled loads, reported by the app itself" to true,
+        "WebSocket frames" to false,
+        "Service Worker fetches" to false,
+        "Traffic from private (incognito) tabs" to false,
+        "Anything at all in a release build" to false,
+    )
+
+    /** The capability rows for the engine currently selected, for the export header. */
+    fun capabilitySummary(engine: BrowserEngineKind): List<Pair<String, Boolean>> =
+        when (engine) {
+            BrowserEngineKind.GECKO -> CAPABILITY_SUMMARY_GECKO
+            BrowserEngineKind.WEBVIEW -> CAPABILITY_SUMMARY_WEBVIEW
+        }
+
+    /** The export section title naming the engine the rows describe. */
+    fun capabilitySectionTitle(engine: BrowserEngineKind): String =
+        when (engine) {
+            BrowserEngineKind.GECKO -> "WHAT THE GECKO ENGINE LETS THIS APP OBSERVE"
+            BrowserEngineKind.WEBVIEW -> "WHAT WEBVIEW LETS THIS APP OBSERVE"
+        }
 }

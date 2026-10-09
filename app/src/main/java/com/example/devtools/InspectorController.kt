@@ -2,6 +2,7 @@ package com.example.devtools
 
 import android.content.Context
 import android.webkit.CookieManager
+import com.example.ui.engine.BrowserEngineKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,6 +44,7 @@ class InspectorController(
 
     override val observer: NetworkObserver = liveObserver
     override val enabled: Boolean get() = settings.policy().enabled
+    override fun capturePolicy(): CapturePolicy = settings.policy()
     override val scriptToken: Long get() = settings.version().toLong()
 
     private val _uiState = MutableStateFlow(
@@ -104,6 +106,9 @@ class InspectorController(
                 liveObserver.onDocumentFinished(message.tabId, message.url, message.title)
             is InspectorMessage.CookieStoreChanged -> liveObserver.onCookieStoreChanged(message.url)
             is InspectorMessage.WebViewDestroyed -> liveObserver.onWebViewDestroyed(message.tabId)
+            is InspectorMessage.EngineRequest -> liveObserver.onEngineRequest(message.record)
+            is InspectorMessage.EngineCookies ->
+                liveObserver.onEngineCookies(message.cookies, message.removed)
         }
     }
 
@@ -201,6 +206,9 @@ class InspectorController(
         val store = liveObserver.store
         val snapshot = store.snapshot(now)
         val dropped = store.droppedCounts()
+        // The capability table in the export header describes the engine that produced the rows,
+        // read at export time so an engine switch is reflected in the next file.
+        val engine = BrowserEngineKind.current(appContext)
         return InspectorExport.render(
             format = format,
             exportedAtMillis = now,
@@ -212,6 +220,8 @@ class InspectorController(
             droppedByPageScript = liveObserver.droppedByPageScript(),
             sessionStartedAtMillis = store.sessionStartedAt(),
             incidents = store.incidents(),
+            capabilities = InspectorExplanations.capabilitySummary(engine),
+            capabilitiesTitle = InspectorExplanations.capabilitySectionTitle(engine),
         )
     }
 

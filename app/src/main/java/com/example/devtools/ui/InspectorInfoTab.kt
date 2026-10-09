@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.example.devtools.ExportFormat
 import com.example.devtools.InspectorSetting
 import com.example.devtools.InspectorUiState
+import com.example.ui.engine.BrowserEngineKind
 
 /**
  * Settings and, more importantly, the honest capability summary: which parts of a request/response
@@ -37,6 +38,7 @@ fun InspectorInfoTab(
     onClearAll: () -> Unit,
     onEndSession: () -> Unit,
     onExport: (ExportFormat) -> Unit,
+    engine: BrowserEngineKind = BrowserEngineKind.WEBVIEW,
 ) {
     Column(
         modifier = Modifier
@@ -141,10 +143,10 @@ fun InspectorInfoTab(
         )
 
         InspectorSection(
-            title = "What WebView can and cannot provide",
-            subtitle = "Cross-checked against the android.webkit API surface; nothing in this list is a guess.",
+            title = "What this engine can and cannot provide",
+            subtitle = "Cross-checked against the engine's API surface; nothing in this list is a guess.",
         )
-        CapabilitySummary()
+        CapabilitySummary(engine)
 
         InspectorSection("Explicitly out of scope")
         Text(

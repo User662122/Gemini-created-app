@@ -1,6 +1,8 @@
 package com.example.ui.engine.gecko
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.MainThread
 import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,10 +45,27 @@ object GeckoRuntimeManager {
     /** The `nativeApp` identifier used by `browser.runtime.connectNative` / `sendNativeMessage`. */
     const val BRIDGE_NATIVE_APP = "browserbridge"
 
+    /**
+     * The `nativeApp` identifier for the bridge extension's *background script* channel (network
+     * capture, cookie store). Kept separate from [BRIDGE_NATIVE_APP] — the per-tab content-script
+     * ports — so background messages can never be delivered to a session's delegate or vice versa.
+     */
+    const val BRIDGE_NET_NATIVE_APP = "browserbridge-net"
+
     private const val BRIDGE_EXTENSION_ASSETS = "resource://android/assets/browserbridge/"
 
     @Volatile
     private var runtime: GeckoRuntime? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * The delegate that receives messages from the extension's background script (see
+     * [GeckoNetworkCapture]). Registered on the [WebExtension] itself, which is a process-wide,
+     * UI-thread call; replacing it replaces the previous one.
+     */
+    @Volatile
+    private var extensionMessageDelegate: WebExtension.MessageDelegate? = null
 
     private val _bridgeExtension = MutableStateFlow<WebExtension?>(null)
 
@@ -86,9 +105,31 @@ object GeckoRuntimeManager {
         geckoRuntime.webExtensionController
             .ensureBuiltIn(BRIDGE_EXTENSION_ASSETS, BRIDGE_EXTENSION_ID)
             .accept(
-                { extension -> _bridgeExtension.value = extension },
+                { extension ->
+                    _bridgeExtension.value = extension
+                    registerExtensionMessageDelegate(extension)
+                },
                 { error -> _bridgeError.value = error?.message ?: "the bridge extension did not load" }
             )
+    }
+
+    /**
+     * Sets the delegate that receives messages from the extension's background script (network
+     * capture and the cookie store). Called before or after the extension finishes installing;
+     * either way the delegate ends up registered exactly once.
+     */
+    fun setExtensionMessageDelegate(delegate: WebExtension.MessageDelegate?) {
+        extensionMessageDelegate = delegate
+        _bridgeExtension.value?.let { registerExtensionMessageDelegate(it) }
+    }
+
+    private fun registerExtensionMessageDelegate(extension: WebExtension) {
+        val delegate = extensionMessageDelegate ?: return
+        // WebExtension.setMessageDelegate is @UiThread, and the install callback may arrive on a
+        // Gecko handler thread, so the registration is posted to the main thread.
+        mainHandler.post {
+            runCatching { extension.setMessageDelegate(delegate, BRIDGE_NET_NATIVE_APP) }
+        }
     }
 
     /**

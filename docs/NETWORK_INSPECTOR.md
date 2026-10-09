@@ -499,9 +499,12 @@ failure message to hand the very same URL to a real browser, which the site acce
 
 ## 13. Status under the embedded Gecko engine
 
-`docs/ENGINE_MIGRATION.md` §12 has the full list; this is the inspector-specific part. The app can now
-render with either engine, and the inspector's capture layer is built on WebView APIs, so the two
-engines differ in what the panels can show. The UI is unchanged and never claims data it does not have.
+`docs/ENGINE_MIGRATION.md` §12 has the full list; this is the inspector-specific part. The app can
+render with either engine, and the two engines expose different things to an embedder — so the
+inspector has **two capture layers**: the WebView client's (`shouldInterceptRequest` and friends) and,
+for Gecko, the bridge extension's background script, which uses the WebExtension APIs Gecko grants
+its extensions (`webRequest`, `webRequestBlocking`, `cookies`). The panels, the export, the masking and
+the settings are identical either way; only the source of the observations differs.
 
 | Panel / data | WebView engine | Gecko engine |
 | --- | --- | --- |
@@ -510,25 +513,51 @@ engines differ in what the panels can show. The UI is unchanged and never claims
 | Renderer death | `onRenderProcessGone` | **yes** — `onCrash` / `onKill` (reported as `isRendererProcessDeath`) |
 | Uncaught page errors | console capture | **yes** — the bridge content script reports `error` / `unhandledrejection` |
 | Other console output (`console.log`, warnings) | yes | **no** — a content script runs in an isolated world and cannot read the page's console |
-| Per-request records (headers, bodies, timing, status) | yes (`shouldInterceptRequest`) | **no** — GeckoView exposes no request interception to embedders |
-| HTTP error statuses, SSL incidents, CDN access-control incidents | yes | **no** — these came from request-level capture |
-| Cookie jar listing (`CookieInspector`) | yes (`CookieManager.getCookie`) | **no** — the public GeckoView API has no cookie accessor (see `ENGINE_MIGRATION.md` §12.1) |
+| Per-request records (URL, method, timing) | yes (`shouldInterceptRequest`) | **yes** — `webRequest` sees every request on the wire |
+| Complete request/response header sets | subset only | **yes, complete** — `webRequest` reports the wire headers, including the ones the platform adds (Cookie, User-Agent, Sec-*) |
+| HTTP status for every response | 4xx/5xx and intercepted responses only | **yes, every response** — including 2xx/3xx |
+| Redirect chains | no | **yes** — every hop is recorded with its status and target |
+| Request bodies (fetch/XHR/sendBeacon) | yes (page JS hooks) | **no** — `webRequest` reports requests, not bodies, and the page hooks cannot run in a Gecko content script's isolated world |
+| Response body previews | responses the app fetches itself | **yes, for text-like resources** (documents, scripts, stylesheets, XHR) — streamed via `webRequest.filterResponseData`, capped at 8 KB, gated on "Capture response body previews"; binary resources are never previewed as text |
+| Network-level errors per request | yes (`onReceivedError`) | **yes** — `webRequest.onErrorOccurred` (the `NS_ERROR_*` text) |
+| HTTP error statuses, SSL incidents, CDN access-control incidents | yes | **yes** — statuses and headers come from the same capture, so the `x-reference-error` / `akamai-grn` detection in §12c fires under Gecko too |
+| Cookie jar listing (`CookieInspector`) | yes (`CookieManager.getCookie`, values without attributes) | **yes, with full attributes** — the extension's `cookies` API reports domain, path, Secure, HttpOnly, expiry and SameSite for every cookie in the engine's store, pushed at startup and on every `cookies.onChanged` |
+| Traffic from private (incognito) tabs | yes | **no** — the extension is not allowed in private browsing, so private tabs produce no capture (and the automation recorder does not run there either) |
+| Anything at all in a release build | no | **no** — the inspector is `NullInspectorRuntime`, so the extension attaches no listeners at all |
 
-**For the full Network/Console/Storage panels under Gecko, use the engine's own tools.** Debug builds
-enable Gecko remote debugging (`GeckoRuntimeSettings.remoteDebuggingEnabled(BuildConfig.DEBUG)`), so
-desktop Firefox DevTools can attach to the running engine:
+**How the Gecko capture reaches the inspector.** `assets/browserbridge/background.js` assembles one
+record per request (headers, status, redirect hops, timing, body preview, errors) and pushes it over
+native messaging on a dedicated channel (`browserbridge-net`, separate from the per-tab content-script
+ports). `GeckoNetworkCapture` maps each record to the app's tab (by the initiating document's URL),
+hands it to the same `LiveNetworkObserver` the WebView path feeds, and answers the extension's
+settings pull — the extension attaches its listeners only while capture is on, so an idle debug build
+pays nothing, and a release build attaches none. **Values cross the boundary raw and are masked at
+capture time in the observer**, exactly as the WebView path is, so "Reveal sensitive values" behaves
+identically under both engines. Masking in two places would be a bug; there is one place.
+
+**For the full Network/Console/Storage panels under Gecko, the engine's own tools still apply.** Debug
+builds enable Gecko remote debugging (`GeckoRuntimeSettings.remoteDebuggingEnabled(BuildConfig.DEBUG)`),
+so desktop Firefox DevTools can attach to the running engine:
 
 ```
 adb forward tcp:6000 localfilesystem:/data/data/com.aistudio.chromebrowser.vktpnx/firefox-debugger-socket
 ```
 
 then *about:debugging → This Firefox → Connect* with host `localhost:6000`. That is the engine's real
-Network, Console, Storage and DOM panels, not a reconstruction — and it is available only in a debug
-build, exactly like the in-app inspector.
+Network, Console, Storage and DOM panels — live, with WebSocket frames and service-worker fetches,
+which the in-app inspector does not show under either engine. The in-app inspector remains the tool for
+exporting a session to a file with the app's own redaction and provenance model; the remote debugging
+socket is the tool for looking *while* the page is in front of you.
 
-**The app's own incident narration still works under Gecko.** The CDN access-control incident in §12 is
-detected from `x-reference-error` / `akamai-grn` marks on responses, which requires request-level
-capture, so it does not fire under Gecko; the failure *itself* is still reported, with the network
-error Gecko returned. Nothing about the "why this app and not Chrome" reasoning changes: a Gecko client
-is no more the standalone Chrome that a client-keyed rule expects, and the app still refuses to
-impersonate one — the **Open externally** action remains the honest escape hatch.
+**The app's own incident narration works under Gecko.** The CDN access-control incident in §12c is
+detected from `x-reference-error` / `akamai-grn` marks on responses, which the `webRequest` capture
+now provides under Gecko as well. Nothing about the "why this app and not Chrome" reasoning changes: a
+Gecko client is no more the standalone Chrome that a client-keyed rule expects, and the app still
+refuses to impersonate one — the **Open externally** action remains the honest escape hatch.
+
+**What the Gecko engine still cannot show the in-app inspector** (the export's capability table says
+the same, under "WHAT THE GECKO ENGINE LETS THIS APP OBSERVE"): request bodies, `console.log` output,
+WebSocket frames, service-worker fetches, and private-tab traffic. Each of those is a Gecko/extension
+boundary, not a missing feature of the app: Gecko's `webRequest` does not expose request bodies,
+content scripts live in an isolated world, WebSocket frames and service-worker fetches never reach
+`webRequest`, and the extension is not allowed in private browsing.

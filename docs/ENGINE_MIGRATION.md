@@ -108,21 +108,32 @@ of drawing UI the app cannot reach:
 These are GeckoView limits, not implementation gaps. Each one is handled by degrading honestly rather
 than by inventing data:
 
-1. **Cookies cannot be enumerated or set** — the public GeckoView API has no cookie accessor
-   (`StorageController` exposes clearing and permissions only; there is no `CookieManager`
-   equivalent). So the developer inspector's cookie panel cannot list the cookie jar under Gecko; the
-   panel is unpopulated, not wrong, and `docs/NETWORK_INSPECTOR.md` says so. Clearing cookies still
-   works (`ClearFlags.COOKIES`).
-2. **No request-level network capture** — GeckoView exposes no `shouldInterceptRequest` equivalent to
-   embedders. Under Gecko the inspector records document loads, load failures (with Gecko's own error
-   code and category) and uncaught page errors. For the full Network/Storage panels, the debug build
-   has Gecko's remote debugging enabled: `adb forward tcp:6000 localfilesystem:/data/data/<pkg>/firefox-debugger-socket`
-   and attach desktop Firefox DevTools. That is the documented, supported route, and it is gated on
-   `BuildConfig.DEBUG` so a release build exposes nothing.
+1. **Cookies cannot be enumerated *by the embedder*** — the public GeckoView API has no cookie
+   accessor (`StorageController` exposes clearing and permissions only; there is no `CookieManager`
+   equivalent). But Gecko grants its *extensions* a `cookies` API, and the bridge extension uses it:
+   the inspector's cookie panel is now fed from the engine's real cookie store, with every attribute
+   (domain, path, Secure, HttpOnly, expiry, SameSite) — more than `CookieManager` ever showed. Clearing
+   cookies still works (`ClearFlags.COOKIES`).
+2. **No request interception *for the embedder*** — GeckoView exposes no `shouldInterceptRequest`
+   equivalent. But Gecko grants its extensions `webRequest`/`webRequestBlocking`, and the bridge
+   extension's background script uses them: the inspector now captures every request under Gecko —
+   complete header sets, every response status, redirect hops, timing, network-level errors, and
+   capped previews of text-like response bodies. See `docs/NETWORK_INSPECTOR.md` §13. For the full
+   Network/Console/Storage panels *live* (WebSocket frames, service-worker fetches), the debug build
+   still has Gecko's remote debugging enabled:
+   `adb forward tcp:6000 localfilesystem:/data/data/<pkg>/firefox-debugger-socket` and attach desktop
+   Firefox DevTools — gated on `BuildConfig.DEBUG` so a release build exposes nothing.
 3. **No `evaluateJavascript`, and no page-world hooks** — a content script runs in an isolated world:
    it shares the DOM but not `window.fetch`, `console.log` or other page objects. Anything that
-   claimed to capture those would silently miss most of them, so the app does not claim it.
+   claimed to capture those would silently miss most of them, so the app does not claim it. This is
+   why request *bodies* stay unavailable under Gecko (`webRequest` reports requests, not bodies) and
+   why the inspector's export says so on every row.
 4. **Console output** — uncaught errors and unhandled rejections only, via the content script.
+5. **Private (incognito) tabs are not captured** — the bridge extension is not allowed in private
+   browsing, so private-tab traffic produces no inspector records (and the automation recorder does
+   not run there either). WebView's incognito profile did produce records; this is the one place the
+   engines genuinely differ to the user's disadvantage, accepted deliberately: an extension that
+   observed private browsing would defeat what private mode is for.
 
 ---
 
@@ -176,7 +187,11 @@ engines are in the tree and selectable; Gecko is the default. The remaining step
 1. ~~CI builds the APK (`:app:assembleDebug`) with GeckoView linked~~ — **done**, see §13.
 2. On a device: install the debug APK from the CI run's artifact, then browse, sign in, upload a file,
    download a file, open a popup, use a `<select>` and a date field, check find-in-page and the
-   selection bar, and switch the engine back and forth in Settings → Browser engine.
+   selection bar, and switch the engine back and forth in Settings → Browser engine. With the Network
+   Inspector open, confirm the Gecko capture path end to end: the NETWORK tab lists requests with
+   complete headers and every status, redirects show as hops, a text resource's body preview opens in
+   the detail view, the COOKIES tab lists the engine's cookie store with attributes, and an export
+   (text or JSON) contains all of it under "WHAT THE GECKO ENGINE LETS THIS APP OBSERVE".
 3. Then, and only then, delete the WebView engine: `ui/components/WebViewContainer.kt`, the two
    `devtools/NetworkInspector*Client` classes, the `addJavascriptInterface` bridges, the
    `android.webkit` imports, and the engine picker itself. §7's WebView-specific notes in

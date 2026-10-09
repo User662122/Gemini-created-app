@@ -77,6 +77,15 @@ interface NetworkObserver {
 
     /** A WebView was destroyed; its in-flight correlations are dropped. */
     fun onWebViewDestroyed(tabId: String)
+
+    /**
+     * One HTTP exchange exactly as the embedded engine's `webRequest` saw it. The engine side has
+     * already mapped Gecko's tab id to the app's tab id.
+     */
+    fun onEngineRequest(record: EngineRequestRecord)
+
+    /** The engine's full cookie store (Gecko's `cookies` API), pushed at startup and on change. */
+    fun onEngineCookies(cookies: List<EngineCookie>, removed: Boolean)
 }
 
 /** No-op observer: release builds and the "inspector off" case. */
@@ -104,6 +113,8 @@ object NullNetworkObserver : NetworkObserver {
     override fun onDocumentFinished(tabId: String, url: String?, title: String?) = Unit
     override fun onCookieStoreChanged(url: String?) = Unit
     override fun onWebViewDestroyed(tabId: String) = Unit
+    override fun onEngineRequest(record: EngineRequestRecord) = Unit
+    override fun onEngineCookies(cookies: List<EngineCookie>, removed: Boolean) = Unit
 }
 
 /**
@@ -162,6 +173,9 @@ enum class HeadersReport(val completeness: HeaderCompleteness) {
 
     /** From an HTTP client the app controls, so the set is complete as sent by that client. */
     APP_HTTP_CLIENT(HeaderCompleteness.FROM_APP_HTTP_CLIENT),
+
+    /** From the embedded engine's `webRequest`: the full header set as it went on the wire. */
+    ENGINE_WEB_REQUEST(HeaderCompleteness.FROM_ENGINE_WEB_REQUEST),
 
     /** Nothing reported any headers for this message. */
     UNKNOWN(HeaderCompleteness.UNKNOWN),
