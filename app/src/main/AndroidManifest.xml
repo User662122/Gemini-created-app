@@ -1,32 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!--
-      Permissions websites can ask for through the browser. GeckoView does not grant any of these by
-      itself: a page request reaches the app's PermissionDelegate, and the app is what asks Android
-      for the runtime permission (see ui/engine/gecko/GeckoPromptHost.kt). Declaring them is what
-      makes the browser's permission UI able to say "yes" at all.
-    -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!--
-      Only used on Android 9 and older, where the public Downloads directory is a plain filesystem
-      path. Android 10+ writes through MediaStore and needs no storage permission.
-    -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
 
     <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -38,10 +16,9 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.MyApplication"
-            android:windowSoftInputMode="stateUnspecified|adjustResize">
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>

@@ -1,31 +1,16 @@
-name: Build Android APK
+name: Build Android browser
 
 on:
   push:
     branches:
-      - arena/01a10696-gemini-created-app
-      - arena/48b9d7a2-gemini-created-app
-      - arena/8df31b3f-gemini-created-app
-    # Documentation-only pushes produce an identical APK; skip the build rather than make anyone
-    # wonder whether a new download is needed.
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "keystore/README.md"
+      - arena/8b7bbf86-gemini-created-app
   pull_request:
     branches:
-      - main
+      - arena/8b7bbf86-gemini-created-app
   workflow_dispatch:
 
 permissions:
-  contents: write
-  # Used only on failure: a check run carrying the first compiler errors, so a
-  # failed build is diagnosable from the API/PR without downloading the job log.
-  checks: write
-
-concurrency:
-  group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
   build:
@@ -37,7 +22,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -56,252 +41,17 @@ jobs:
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses
-          # Platform 37 is what GeckoView 157 (and the androidx libraries this project resolves)
-          # require to compile against. Each package is installed on its own so that a name which is
-          # not published under exactly this spelling cannot stop the job — Gradle downloads any
-          # missing SDK component itself once the licences above are accepted.
-          for package in \
-            "platform-tools" \
-            "platforms;android-37" \
-            "platforms;android-36.1" \
-            "build-tools;36.0.0"; do
+          for package in "platform-tools" "platforms;android-37" "build-tools;36.0.0"; do
             "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "$package" || true
           done
 
-      - name: Build installable debug APK
-        id: build
-        run: |
-          mkdir -p app/build
-          set -o pipefail
-          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee app/build/ci-build.log
+      - name: Build and test
+        run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
 
-      - name: Publish build failure diagnostics
-        if: failure() && steps.build.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILD_LOG: app/build/ci-build.log
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-
-          log = Path(os.environ["BUILD_LOG"])
-          lines = log.read_text(errors="replace").splitlines() if log.exists() else []
-
-          first = next(
-              (
-                  i
-                  for i, line in enumerate(lines)
-                  if line.startswith("e: ") or "error:" in line.lower() or line.startswith("FAILURE:")
-              ),
-              max(0, len(lines) - 40),
-          )
-          head = chr(10).join(lines[max(0, first - 3):first + 40])
-
-          # Gradle puts the root cause on a "Caused by:" line *after* the stack trace, so a window
-          # from the first error alone can land entirely inside frames. Both parts are needed.
-          causes = [
-              line for line in lines
-              if "Caused by:" in line
-              or "Execution failed" in line
-              or line.lstrip().startswith("* What went wrong")
-              or line.lstrip().startswith("* Try:")
-          ]
-          tail = chr(10).join(lines[-90:])
-          excerpt = (
-              "--- first errors ---" + chr(10) + head
-              + chr(10) + "--- causes ---" + chr(10) + chr(10).join(causes[:20])
-              + chr(10) + "--- log tail ---" + chr(10) + tail
-          )
-
-          # A check run keeps the text on GitHub's API (readable without the job log).
-          payload = {
-              "name": "Debug build diagnostics",
-              "head_sha": os.environ["GITHUB_SHA"],
-              "status": "completed",
-              "conclusion": "failure",
-              "output": {
-                  "title": "Debug build failed",
-                  "summary": "First errors from :app:assembleDebug",
-                  "text": excerpt[-60000:],
-              },
-          }
-          Path("/tmp/build-check.json").write_text(json.dumps(payload))
-          subprocess.run(
-              ["gh", "api", "-X", "POST",
-               f"repos/{os.environ['GITHUB_REPOSITORY']}/check-runs",
-               "--input", "/tmp/build-check.json"],
-              check=False,
-          )
-
-          # Short annotations too; the runner drops very long ones.
-          for line in [l for l in excerpt.splitlines() if l.startswith("e: ")][:3]:
-              print(f"::error title=Compile error::{line[:1200]}")
-          PY
-
-      - name: Run unit tests
-        id: unit_tests
-        run: |
-          mkdir -p app/build
-          set -o pipefail
-          gradle :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee app/build/ci-test.log
-
-      - name: Annotate unit test failure details
-        if: failure() && steps.unit_tests.outcome == 'failure'
-        env:
-          TEST_LOG: app/build/ci-test.log
-        run: |
-          python3 - <<'PY'
-          import glob
-          import os
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          failures = []
-          for report in glob.glob("app/build/test-results/testDebugUnitTest/TEST-*.xml"):
-              root = ET.parse(report).getroot()
-              for case in root.iter("testcase"):
-                  for tag in ("failure", "error"):
-                      result = case.find(tag)
-                      if result is not None:
-                          name = f"{case.get('classname', '')}.{case.get('name', '')}"
-                          message = result.get("message", "")
-                          trace = (result.text or "").strip()
-                          failures.append(f"{name}: {message}{chr(10)}{trace[:5000]}")
-
-          if failures:
-              details = chr(10).join(failures)[:9000]
-          else:
-              lines = Path(os.environ["TEST_LOG"]).read_text(errors="replace").splitlines()
-              start = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), max(0, len(lines) - 80))
-              details = chr(10).join(lines[start:start + 50])[:9000]
-          escaped = details.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A")
-          print(f"::error title=Unit test failure::{escaped}")
-          PY
-
-      - name: Upload unit test diagnostics
-        if: failure()
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
-          name: android-unit-test-diagnostics
-          path: |
-            app/build/ci-build.log
-            app/build/ci-test.log
-            app/build/reports/tests/testDebugUnitTest/
-            app/build/test-results/testDebugUnitTest/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      # One artifact per architecture, so a phone downloads ~1/3 of what it used to: the engine's
-      # native library is per-architecture, and the previous single artifact carried three copies of
-      # it. Pick the one that matches the device — `adb shell getprop ro.product.cpu.abi` prints it,
-      # and every phone made in the last several years is arm64-v8a.
-      - name: Upload arm64-v8a APK (most phones)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-arm64-v8a
-          path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-          if-no-files-found: warn
+          name: gecko-browser-apks
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Upload armeabi-v7a APK (32-bit arm devices)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-armeabi-v7a
-          path: app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload x86_64 APK (emulators)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-x86_64
-          path: app/build/outputs/apk/debug/app-x86_64-debug.apk
-          if-no-files-found: warn
-          retention-days: 14
-
-      # Actions artifacts require a GitHub login to download and cannot be resumed. A release asset
-      # is a plain public URL that a phone browser, `curl -C -` or a download manager can fetch and
-      # resume — which matters when the file is ~90 MB and the connection is a phone's.
-      #
-      # The tag is fixed and the assets are replaced on every push, so the URLs never change:
-      #   https://github.com/<owner>/<repo>/releases/download/debug-latest/app-arm64-v8a-debug.apk
-      - name: Publish APKs as a downloadable release
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="debug-latest"
-          apk_dir="app/build/outputs/apk/debug"
-
-          files=()
-          for name in app-arm64-v8a-debug.apk app-armeabi-v7a-debug.apk app-x86_64-debug.apk; do
-            if [ -f "$apk_dir/$name" ]; then files+=("$apk_dir/$name"); fi
-          done
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No split APKs were produced; nothing to publish."
-            exit 0
-          fi
-
-          # Android refuses to install an app over one signed by a different key, so the signing
-          # identity is published with every build: if it ever changes, the next install needs an
-          # uninstall first (losing tabs, history and bookmarks), and that should be visible on the
-          # releases page rather than discovered by a failed install.
-          #
-          # Every pipeline here ends in `|| true`: under `set -e` a probe that finds nothing must not
-          # take the release with it.
-          CERT_SHA="$(keytool -list -v -keystore keystore/dev-debug.p12 -storepass android \
-            -alias androiddebugkey 2>&1 | sed -n 's/.*SHA256: *//p' | head -1 || true)"
-          APK_SHA="$(keytool -printcert -jarfile "${files[0]}" 2>&1 \
-            | sed -n 's/.*SHA256: *//p' | head -1 || true)"
-
-          {
-            echo "Debug builds of this app, one APK per CPU architecture, rebuilt on every push to a"
-            echo "tracked branch. The engine's native library is what makes these large, and it is"
-            echo "per-architecture, so download only the APK your device needs."
-            echo
-            echo "| APK | Size | For |"
-            echo "| --- | --- | --- |"
-            for file in "${files[@]}"; do
-              base="$(basename "$file")"
-              size="$(du -h "$file" | cut -f1)"
-              case "$base" in
-                *arm64*) for_what="Phones built in the last several years (arm64-v8a)" ;;
-                *armeabi*) for_what="Older 32-bit arm devices (armeabi-v7a)" ;;
-                *) for_what="Emulators (x86_64)" ;;
-              esac
-              echo "| \`$base\` | $size | $for_what |"
-            done
-            echo
-            echo "Not sure which one? Run \`adb shell getprop ro.product.cpu.abi\`, or install the"
-            echo "arm64-v8a APK — that is what nearly every current phone is."
-            echo
-            echo "Install: open the downloaded file on the device, or \`adb install -r app-arm64-v8a-debug.apk\`."
-            echo "\`-r\` keeps the app's data, so tabs, history and bookmarks survive an upgrade."
-            echo
-            echo "Build: commit \`${GITHUB_SHA}\` of branch \`${GITHUB_REF_NAME}\` (workflow run ${GITHUB_RUN_ID})."
-            echo
-            echo "Signing certificate SHA-256 (the debug key in \`keystore/\`, and the same for every"
-            echo "build): \`${CERT_SHA:-unavailable}\`"
-            echo
-            echo "Read back from the APK itself: \`${APK_SHA:-unavailable}\`"
-            echo
-            echo "Because that key never changes, installing a newer APK over an older one is a normal"
-            echo "upgrade: the app keeps its data. If an install is ever refused with"
-            echo "\`INSTALL_FAILED_UPDATE_INCOMPATIBLE\`, the fingerprint above has changed — uninstall"
-            echo "once, then upgrading works again."
-          } > /tmp/release-notes.md
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "Debug APK (latest)" --notes-file /tmp/release-notes.md --prerelease
-          else
-            gh release create "$tag" --title "Debug APK (latest)" --notes-file /tmp/release-notes.md \
-              --prerelease --target "$GITHUB_SHA"
-          fi
-          gh release upload "$tag" "${files[@]}" --clobber

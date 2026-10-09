@@ -1,6 +1,6 @@
 {
-  "name": "Chrome Browser",
-  "description": "A full-featured Chrome-style web browser with tab management, bookmarks, history, and search",
+  "name": "Gecko Browser",
+  "description": "A minimal Android web browser powered by Mozilla GeckoView and SpiderMonkey.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
