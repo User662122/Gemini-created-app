@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +64,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     var address by remember(activeTab.id) { mutableStateOf(activeTab.url) }
     var isEditingAddress by remember(activeTab.id) { mutableStateOf(false) }
     var showTabPicker by remember { mutableStateOf(false) }
+    var showAutomation by remember { mutableStateOf(false) }
     val geckoView = remember(activeTab.id) { mutableStateOf<GeckoView?>(null) }
 
     LaunchedEffect(activeTab.id, activeTab.url) {
@@ -156,6 +159,10 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     }
                     IconButton(onClick = viewModel::goForward, enabled = activeTab.canGoForward) {
                         Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showAutomation = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Automation")
                     }
                 }
 
@@ -254,6 +261,13 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     Text("Done")
                 }
             },
+        )
+    }
+
+    if (showAutomation) {
+        AutomationDialog(
+            service = viewModel.automation,
+            onDismiss = { showAutomation = false },
         )
     }
 }

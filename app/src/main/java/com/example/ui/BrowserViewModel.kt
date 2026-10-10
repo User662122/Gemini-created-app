@@ -10,6 +10,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.example.automation.AutomationBridge
+import com.example.automation.AutomationService
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -46,6 +48,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val runtime = BrowserRuntime.get(application)
     private val ownedTabs = LinkedHashMap<String, BrowserTabState>()
 
+    private val automationBridge = AutomationBridge(runtime)
+
+    /** Localhost control API for scripts (see docs/AUTOMATION.md). Off until enabled. */
+    val automation = AutomationService(application, this, automationBridge)
+
     val tabs = mutableStateListOf<BrowserTabState>()
 
     var activeTabId by mutableStateOf<String?>(null)
@@ -55,10 +62,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.firstOrNull()
 
     init {
+        automationBridge.install()
         openNewTab()
+        automation.startIfEnabled()
     }
 
-    fun openNewTab(initialUrl: String? = null) {
+    fun openNewTab(initialUrl: String? = null): BrowserTabState {
         val previousTab = activeTab
         val tab = createTab()
         tabs.add(tab)
@@ -69,6 +78,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (!initialUrl.isNullOrBlank() && initialUrl != "about:blank") {
             load(tab, initialUrl)
         }
+        return tab
+    }
+
+    fun findTab(tabId: String): BrowserTabState? = tabs.firstOrNull { it.id == tabId }
+
+    /** Loads an already-resolved URL in the given tab. Returns false if the tab is gone. */
+    fun loadInTab(tabId: String, url: String): Boolean {
+        val tab = findTab(tabId) ?: return false
+        load(tab, url)
+        return true
     }
 
     fun selectTab(tabId: String) {
@@ -104,6 +123,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Called after a closed tab's GeckoView has detached. */
     fun finishClosingTab(tabId: String) {
         val closing = ownedTabs.remove(tabId) ?: return
+        automationBridge.detach(tabId)
         closing.session.setActive(false)
         runCatching { closing.session.close() }
     }
@@ -159,6 +179,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             session = session,
         )
         ownedTabs[tab.id] = tab
+        automationBridge.attach(tab.id, session)
 
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onLoadRequest(
@@ -261,6 +282,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
+        automation.stop()
         ownedTabs.values.toList().forEach { tab ->
             runCatching {
                 tab.session.setActive(false)

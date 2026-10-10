@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "name": "Automation Bridge",
+  "version": "1.0",
+  "description": "Connects pages in this browser to the localhost automation API.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "automation-bridge@gecko-browser.local"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
