@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - arena/8b7bbf86-gemini-created-app
+      - arena/ea1f687f-gemini-created-app
   pull_request:
     branches:
       - arena/8b7bbf86-gemini-created-app
+      - arena/ea1f687f-gemini-created-app
   workflow_dispatch:
 
 permissions:

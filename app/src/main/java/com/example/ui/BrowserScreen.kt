@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,12 +46,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.R
+import com.example.remote.RemoteControl
 import org.mozilla.geckoview.GeckoView
 
 @Composable
@@ -62,6 +66,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     var address by remember(activeTab.id) { mutableStateOf(activeTab.url) }
     var isEditingAddress by remember(activeTab.id) { mutableStateOf(false) }
     var showTabPicker by remember { mutableStateOf(false) }
+    var showRemoteControl by remember { mutableStateOf(false) }
     val geckoView = remember(activeTab.id) { mutableStateOf<GeckoView?>(null) }
 
     LaunchedEffect(activeTab.id, activeTab.url) {
@@ -82,6 +87,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     DisposableEffect(activeTab.id) {
         activeTab.session.setActive(true)
         onDispose {
+            viewModel.attachView(activeTab.id, null)
             geckoView.value?.releaseSession()
             geckoView.value = null
             if (activeTab.isClosing) {
@@ -151,11 +157,21 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                         .padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = viewModel::goBack, enabled = activeTab.canGoBack) {
+                    IconButton(onClick = { viewModel.goBack() }, enabled = activeTab.canGoBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                    IconButton(onClick = viewModel::goForward, enabled = activeTab.canGoForward) {
+                    IconButton(onClick = { viewModel.goForward() }, enabled = activeTab.canGoForward) {
                         Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    val remoteRunning = RemoteControl.status.running
+                    IconButton(onClick = { showRemoteControl = true }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_remote_control),
+                            contentDescription = if (remoteRunning) "Remote control (on)" else "Remote control",
+                            tint = if (remoteRunning) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
 
@@ -182,6 +198,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                             )
                             setSession(activeTab.session)
                             geckoView.value = this
+                            viewModel.attachView(activeTab.id, this)
                         }
                     },
                     update = { view -> geckoView.value = view },
@@ -202,6 +219,10 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                 }
             }
         }
+    }
+
+    if (showRemoteControl) {
+        RemoteControlDialog(onDismiss = { showRemoteControl = false })
     }
 
     if (showTabPicker) {

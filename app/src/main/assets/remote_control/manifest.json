@@ -1,0 +1,25 @@
+{
+  "manifest_version": 2,
+  "name": "Remote control bridge",
+  "version": "1.0",
+  "description": "Lets the browser's localhost control server run commands inside web pages.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "remote-control@geckobrowser.local"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons"
+  ]
+}

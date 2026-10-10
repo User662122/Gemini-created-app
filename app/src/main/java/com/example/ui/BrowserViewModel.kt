@@ -10,12 +10,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.example.remote.PageBridge
+import com.example.remote.RemoteControl
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoView
 import java.util.Locale
 import java.util.UUID
 
@@ -46,6 +49,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val runtime = BrowserRuntime.get(application)
     private val ownedTabs = LinkedHashMap<String, BrowserTabState>()
 
+    /** Lets the localhost control server run commands inside pages (see com.example.remote). */
+    internal val pageBridge = PageBridge(runtime)
+
+    /** The GeckoView currently showing [attachedViewTabId], used for screenshots. */
+    private var attachedView: GeckoView? = null
+    private var attachedViewTabId: String? = null
+
     val tabs = mutableStateListOf<BrowserTabState>()
 
     var activeTabId by mutableStateOf<String?>(null)
@@ -55,21 +65,50 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.firstOrNull()
 
     init {
+        pageBridge.install()
+        RemoteControl.attachBrowser(this)
         openNewTab()
     }
 
-    fun openNewTab(initialUrl: String? = null) {
+    fun openNewTab(initialUrl: String? = null, activate: Boolean = true): BrowserTabState {
         val previousTab = activeTab
         val tab = createTab()
         tabs.add(tab)
-        previousTab?.session?.setActive(false)
-        activeTabId = tab.id
-        tab.session.setActive(true)
+        if (activate || previousTab == null) {
+            previousTab?.session?.setActive(false)
+            activeTabId = tab.id
+            tab.session.setActive(true)
+        } else {
+            tab.session.setActive(false)
+        }
 
         if (!initialUrl.isNullOrBlank() && initialUrl != "about:blank") {
             load(tab, initialUrl)
         }
+        return tab
     }
+
+    /** Finds a tab by id or zero-based index; a null or blank reference means the active tab. */
+    fun findTab(reference: String?): BrowserTabState? {
+        val ref = reference?.trim().orEmpty()
+        if (ref.isEmpty()) return activeTab
+        tabs.firstOrNull { it.id == ref }?.let { return it }
+        return ref.toIntOrNull()?.let { tabs.getOrNull(it) }
+    }
+
+    /** Called by BrowserScreen when a GeckoView starts or stops showing a tab. */
+    fun attachView(tabId: String, view: GeckoView?) {
+        if (view != null) {
+            attachedView = view
+            attachedViewTabId = tabId
+        } else if (attachedViewTabId == tabId) {
+            attachedView = null
+            attachedViewTabId = null
+        }
+    }
+
+    /** The on-screen GeckoView for [tabId], if that tab is the one being displayed. */
+    fun viewFor(tabId: String): GeckoView? = attachedView?.takeIf { attachedViewTabId == tabId }
 
     fun selectTab(tabId: String) {
         if (activeTabId == tabId) return
@@ -104,37 +143,60 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Called after a closed tab's GeckoView has detached. */
     fun finishClosingTab(tabId: String) {
         val closing = ownedTabs.remove(tabId) ?: return
+        pageBridge.detach(tabId)
         closing.session.setActive(false)
         runCatching { closing.session.close() }
     }
 
     fun navigate(address: String) {
         val tab = activeTab ?: return
-        val url = BrowserAddress.resolve(address) ?: return
+        navigate(tab, address)
+    }
+
+    /** Loads [address] (a URL or search terms) in [tab]; returns the resolved URL. */
+    fun navigate(tab: BrowserTabState, address: String): String? {
+        val url = BrowserAddress.resolve(address) ?: return null
         load(tab, url)
+        return url
     }
 
     fun goBack() {
-        activeTab?.takeIf { it.canGoBack }?.session?.goBack()
+        activeTab?.let { goBack(it) }
+    }
+
+    fun goBack(tab: BrowserTabState): Boolean {
+        if (!tab.canGoBack) return false
+        tab.session.goBack()
+        return true
     }
 
     fun goForward() {
-        activeTab?.takeIf { it.canGoForward }?.session?.goForward()
+        activeTab?.let { goForward(it) }
+    }
+
+    fun goForward(tab: BrowserTabState): Boolean {
+        if (!tab.canGoForward) return false
+        tab.session.goForward()
+        return true
     }
 
     fun reload() {
-        activeTab?.let { tab ->
-            if (tab.url.isNotBlank()) {
-                tab.session.reload()
-            }
-        }
+        activeTab?.let { reload(it) }
+    }
+
+    fun reload(tab: BrowserTabState): Boolean {
+        if (tab.url.isBlank()) return false
+        tab.session.reload()
+        return true
     }
 
     fun stopLoading() {
-        activeTab?.let { tab ->
-            tab.session.stop()
-            tab.isLoading = false
-        }
+        activeTab?.let { stopLoading(it) }
+    }
+
+    fun stopLoading(tab: BrowserTabState) {
+        tab.session.stop()
+        tab.isLoading = false
     }
 
     private fun load(tab: BrowserTabState, url: String) {
@@ -159,6 +221,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             session = session,
         )
         ownedTabs[tab.id] = tab
+        pageBridge.attach(tab.id, session)
 
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onLoadRequest(
@@ -261,6 +324,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
+        RemoteControl.detachBrowser(this)
+        pageBridge.release()
+        attachedView = null
         ownedTabs.values.toList().forEach { tab ->
             runCatching {
                 tab.session.setActive(false)
